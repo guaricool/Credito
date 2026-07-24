@@ -27,7 +27,7 @@ services:
       SECRET_KEY: dev_secret_key_change_in_production
       ENVIRONMENT: development
     ports:
-      - "8000:8000"
+      - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
