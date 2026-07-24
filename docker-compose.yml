@@ -39,7 +39,7 @@ services:
     ports:
       - "3001:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://13.140.181.29:8001/api/v1
+      - NEXT_PUBLIC_API_URL=http://credito.13.140.181.29.sslip.io
     depends_on:
       - backend
 
