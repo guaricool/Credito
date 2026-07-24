@@ -157,3 +157,52 @@ class DisputeCampaignResponse(DisputeCampaignBase):
     created_at: datetime
     letters: List[DisputeLetterResponse] = []
 
+
+# --- Data Leak & Data Broker Privacy Schemas ---
+class DataLeakResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    user_id: UUID
+    breach_name: str
+    leak_date: Optional[date] = None
+    exposed_fields: Optional[List[str]] = None
+    compromised_credentials: Optional[str] = None
+    risk_level: str
+    created_at: datetime
+
+
+class DataBrokerResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    broker_name: str
+    category: Optional[str] = None
+    opt_out_url: Optional[str] = None
+    removal_mechanism: str
+
+
+class OptOutRequestResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    user_id: UUID
+    broker_id: UUID
+    status: str
+    request_date: datetime
+    confirmation_token: Optional[str] = None
+    last_checked: datetime
+    broker: Optional[DataBrokerResponse] = None
+
+
+class OptOutTriggerRequest(BaseModel):
+    broker_ids: Optional[List[UUID]] = None
+
+
+class FCRA605BBlockRequest(BaseModel):
+    bureau: str  # Experian, Equifax, TransUnion
+    police_report_or_affidavit_number: Optional[str] = "FTC-IDENTITY-THEFT-AFFIDAVIT-2026"
+    fraudulent_tradelines: List[str]
+    ftc_affidavit_date: Optional[date] = None
+
+

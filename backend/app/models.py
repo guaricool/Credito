@@ -24,6 +24,50 @@ class User(Base):
 
     reports = relationship("CreditReport", back_populates="user", cascade="all, delete-orphan")
     disputes = relationship("DisputeCampaign", back_populates="user", cascade="all, delete-orphan")
+    leaks = relationship("DataLeak", back_populates="user", cascade="all, delete-orphan")
+    opt_out_requests = relationship("OptOutRequest", back_populates="user", cascade="all, delete-orphan")
+
+class DataLeak(Base):
+    __tablename__ = "data_leaks"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    breach_name = Column(String(255), nullable=False)
+    leak_date = Column(Date, nullable=True)
+    exposed_fields = Column(JSON, nullable=True)  # ["email", "password", "ssn_last_four", "address"]
+    compromised_credentials = Column(String(255), nullable=True)
+    risk_level = Column(String(20), default="MEDIUM")  # CRITICAL, HIGH, MEDIUM, LOW
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="leaks")
+
+class DataBroker(Base):
+    __tablename__ = "data_brokers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    broker_name = Column(String(255), nullable=False, unique=True)
+    category = Column(String(100), nullable=True)  # People Search, Background Check, Marketing
+    opt_out_url = Column(String(512), nullable=True)
+    removal_mechanism = Column(String(100), default="CCPA_FORM")  # CCPA_FORM, OPT_OUT_EMAIL, DIRECT_API
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    opt_out_requests = relationship("OptOutRequest", back_populates="broker", cascade="all, delete-orphan")
+
+class OptOutRequest(Base):
+    __tablename__ = "opt_out_requests"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    broker_id = Column(UUID(as_uuid=True), ForeignKey("data_brokers.id", ondelete="CASCADE"), nullable=False)
+    status = Column(String(50), default="PENDING")  # PENDING, SUBMITTED, VERIFIED_REMOVED, REJECTED
+    request_date = Column(DateTime, default=datetime.utcnow)
+    confirmation_token = Column(String(100), nullable=True)
+    last_checked = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="opt_out_requests")
+    broker = relationship("DataBroker", back_populates="opt_out_requests")
+
 
 class CreditReport(Base):
     __tablename__ = "credit_reports"
