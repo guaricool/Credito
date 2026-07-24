@@ -3,16 +3,18 @@ version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: credit_postgres
     environment:
       POSTGRES_USER: credit_admin
       POSTGRES_PASSWORD: credit_secure_password_2026
       POSTGRES_DB: credit_law_db
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U credit_admin -d credit_law_db"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
       retries: 5
 
@@ -20,11 +22,15 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: credit_backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://credit_admin:credit_secure_password_2026@postgres:5432/credit_law_db
+      SECRET_KEY: dev_secret_key_change_in_production
+      ENVIRONMENT: development
     ports:
       - "8000:8000"
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://credit_admin:credit_secure_password_2026@postgres:5432/credit_law_db
     depends_on:
       postgres:
         condition: service_healthy
+
+volumes:
+  postgres_data:
