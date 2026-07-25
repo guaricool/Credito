@@ -34,6 +34,7 @@ import {
   X,
   Mail,
   CheckSquare,
+  ExternalLink,
 } from 'lucide-react';
 
 interface BureauDetail {
@@ -204,7 +205,6 @@ export default function DashboardPage() {
   const [showNoticeModal, setShowNoticeModal] = useState(false);
   const [noticePreviews, setNoticePreviews] = useState<NoticePreview[]>([]);
   const [selectedPreviewIndex, setSelectedPreviewIndex] = useState(0);
-  const [authorizedConsent, setAuthorizedConsent] = useState(false);
   const [loadingPreviews, setLoadingPreviews] = useState(false);
 
   // FCRA 605B Block Affidavit states
@@ -275,7 +275,7 @@ export default function DashboardPage() {
         console.error('Auth check error:', err);
         localStorage.removeItem('token');
         router.push('/login');
-      } finally {
+      } flexally {
         setLoadingUser(false);
       }
     };
@@ -294,7 +294,7 @@ export default function DashboardPage() {
         return prev;
       });
     }, 1000);
-    return () => setInterval(interval);
+    return () => clearInterval(interval);
   }, []);
 
   const handleSignOut = () => {
@@ -451,25 +451,19 @@ export default function DashboardPage() {
     }
   };
 
-  // Confirm and Execute Opt-Out Dispatch via Authorized Agent
-  const handleConfirmOptOutDispatch = async () => {
-    if (!authorizedConsent) {
-      alert('Debes confirmar y aceptar la casilla de autorización estatutaria.');
-      return;
-    }
-
-    setTriggeringOptOut(true);
+  // Trigger Mailto sending & record request as submitted in DB
+  const handleMailtoDispatch = async (mailtoLink: string) => {
     try {
+      // Mark as submitted in DB
       const optRes = await api.post('/api/v1/privacy/opt-out', {});
       setBrokerRequests(optRes.data || []);
       setPrivacyScore((prev) => Math.min(100, prev + 10));
-      setShowNoticeModal(false);
       handleRefreshAdvisor();
     } catch (err) {
-      console.error('Opt-out trigger error:', err);
-    } finally {
-      setTriggeringOptOut(false);
+      console.error('Error recording opt-out status:', err);
     }
+    // Open native mailto app
+    window.location.href = mailtoLink;
   };
 
   // Generate FCRA 605B Block Affidavit
@@ -992,7 +986,7 @@ export default function DashboardPage() {
               <button
                 onClick={handleOpenNoticeInspector}
                 disabled={loadingPreviews || triggeringOptOut}
-                className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-500 to-purple-600 hover:opacity-95 shadow-md shadow-indigo-500/20 transition-all flex items-center gap-2 disabled:opacity-40"
+                className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-500 via-purple-600 to-indigo-600 hover:opacity-95 shadow-md shadow-indigo-500/20 transition-all flex items-center gap-2 disabled:opacity-40"
               >
                 {loadingPreviews ? (
                   <>
@@ -1001,8 +995,8 @@ export default function DashboardPage() {
                   </>
                 ) : (
                   <>
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>Inspect Notices & Authorize Opt-Out</span>
+                    <Mail className="w-3.5 h-3.5" />
+                    <span>Review & Send CCPA Notices (Mailto)</span>
                   </>
                 )}
               </button>
@@ -1104,7 +1098,7 @@ export default function DashboardPage() {
                   {brokerRequests.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-4 px-4 text-center text-slate-500 text-xs italic">
-                        Click "Inspect Notices & Authorize Opt-Out" above to review and dispatch removal requests.
+                        Click "Review & Send CCPA Notices (Mailto)" above to inspect and send removal requests.
                       </td>
                     </tr>
                   ) : (
@@ -1622,7 +1616,7 @@ export default function DashboardPage() {
         </section>
       </main>
 
-      {/* CCPA LEGAL NOTICE INSPECTOR & AUTHORIZATION MODAL */}
+      {/* CCPA LEGAL NOTICE INSPECTOR & MAILTO DISPATCH MODAL */}
       {showNoticeModal && noticePreviews.length > 0 && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-[#0b1021] border border-indigo-500/40 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
@@ -1630,14 +1624,14 @@ export default function DashboardPage() {
             <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/80">
               <div className="flex items-center gap-3">
                 <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-                  <ShieldCheck className="w-5 h-5" />
+                  <Mail className="w-5 h-5" />
                 </div>
                 <div>
                   <h3 className="font-bold text-white text-base">
-                    CCPA / CPRA Statutory Legal Notice Inspector & Consent
+                    CCPA / CPRA Statutory Legal Notice Inspector (Direct Mailto Dispatch)
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Inspect the exact statutory notice drafted for each broker before authorizing dispatch.
+                    Inspect notice text for each Data Broker and dispatch directly from your personal email client.
                   </p>
                 </div>
               </div>
@@ -1699,16 +1693,14 @@ export default function DashboardPage() {
                       {noticePreviews[selectedPreviewIndex].body_text}
                     </div>
 
-                    <div className="flex justify-end">
-                      <a
-                        href={noticePreviews[selectedPreviewIndex].mailto_link}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="px-4 py-2 rounded-xl text-xs font-bold text-indigo-300 border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 transition-all flex items-center gap-1.5"
+                    <div className="pt-2 flex justify-end">
+                      <button
+                        onClick={() => handleMailtoDispatch(noticePreviews[selectedPreviewIndex].mailto_link)}
+                        className="px-6 py-3 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-500 via-purple-600 to-indigo-600 hover:opacity-95 shadow-lg shadow-indigo-500/20 transition-all flex items-center gap-2"
                       >
-                        <Mail className="w-3.5 h-3.5" />
-                        <span>Send via Personal Email Client (Mailto)</span>
-                      </a>
+                        <ExternalLink className="w-4 h-4" />
+                        <span>Send CCPA Notice via Personal Email App (Mailto)</span>
+                      </button>
                     </div>
                   </>
                 )}
@@ -1716,45 +1708,18 @@ export default function DashboardPage() {
             </div>
 
             {/* Modal Action Footer */}
-            <div className="p-4 border-t border-slate-800 bg-slate-950 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={authorizedConsent}
-                  onChange={(e) => setAuthorizedConsent(e.target.checked)}
-                  className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500"
-                />
-                <span>
-                  Confirm I have read these statutory notices & authorize designated Agent dispatch under <strong className="text-white">Cal. Civ. Code § 1798.135</strong>.
-                </span>
-              </label>
-
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={() => setShowNoticeModal(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white transition-colors"
-                >
-                  Cancel
-                </button>
-
-                <button
-                  onClick={handleConfirmOptOutDispatch}
-                  disabled={!authorizedConsent || triggeringOptOut}
-                  className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-500 via-purple-600 to-indigo-600 hover:opacity-95 shadow-lg shadow-indigo-500/20 transition-all flex items-center gap-2 disabled:opacity-40"
-                >
-                  {triggeringOptOut ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Dispatching Requests...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckSquare className="w-3.5 h-3.5" />
-                      <span>Authorize & Dispatch Opt-Out Requests</span>
-                    </>
-                  )}
-                </button>
+            <div className="p-4 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
+              <div className="text-xs text-slate-400 font-mono flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-400" />
+                <span>Pre-filled & formatted according to Cal. Civ. Code § 1798.100 & § 1798.135.</span>
               </div>
+
+              <button
+                onClick={() => setShowNoticeModal(false)}
+                className="px-5 py-2 rounded-xl text-xs font-bold text-slate-300 border border-slate-700 bg-slate-900 hover:text-white transition-colors"
+              >
+                Close Inspector
+              </button>
             </div>
           </div>
         </div>

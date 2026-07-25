@@ -242,7 +242,9 @@ class LeakAgentService:
                 f"Consumer & Authorized Agent Designation"
             )
 
-            mailto_link = f"mailto:{target_email}?subject={subject.replace(' ', '%20')}&body={body.replace(' ', '%20').replace('\n', '%0A')}"
+            body_escaped = body.replace(' ', '%20').replace('\n', '%0A')
+            subject_escaped = subject.replace(' ', '%20')
+            mailto_link = f"mailto:{target_email}?subject={subject_escaped}&body={body_escaped}"
 
             previews.append({
                 "request_id": str(req.id),
