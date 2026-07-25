@@ -1,8 +1,18 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.database import init_db
+import app.models  # Ensure models are registered in Base.metadata
+
 from app.routers import auth_router, parser_router, compliance_router, dispute_router, leak_router
 
-app = FastAPI(title="US Credit Law & Dispute Platform API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Ensure all DB tables exist on application startup
+    await init_db()
+    yield
+
+app = FastAPI(title="US Credit Law & Dispute Platform API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
