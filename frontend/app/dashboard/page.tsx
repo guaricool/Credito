@@ -41,6 +41,7 @@ import {
   Car,
   Info,
   ArrowDown,
+  Calendar,
 } from 'lucide-react';
 
 interface BureauDetail {
@@ -416,7 +417,6 @@ export default function DashboardPage() {
   const installmentBal = scorePlan?.utilization.installment_balance || 0;
   const totalRealDebt = scorePlan?.utilization.total_real_debt || (revolvingBal + installmentBal);
 
-  // Helper to extract max balance for sorting & coloring
   const getMaxBalance = (t: Tradeline): number => {
     let maxB = 0;
     for (const b of t.bureau_details) {
@@ -427,10 +427,8 @@ export default function DashboardPage() {
     return maxB;
   };
 
-  // Sort tradelines from HIGHEST balance to LOWEST balance (De mayor a menor)
   const sortedTradelines = [...tradelines].sort((a, b) => getMaxBalance(b) - getMaxBalance(a));
 
-  // Visual debt color gradient helper (Rojo -> Naranja -> Amarillo -> Cían -> Verde)
   const getDebtStyle = (bal: number) => {
     if (bal >= 50000) {
       return {
@@ -672,10 +670,10 @@ export default function DashboardPage() {
             <div>
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <CreditCard className="w-6 h-6 text-cyan-400" />
-                Desglose Jerárquico de Cuentas y Deudas ({sortedTradelines.length})
+                Desglose Jerárquico de Cuentas, Plazos y Deudas ({sortedTradelines.length})
               </h2>
               <p className="text-xs text-slate-400 mt-1 max-w-2xl">
-                Organizadas estrictamente <span className="text-cyan-300 font-semibold">de mayor a menor monto adeudado</span> con escala de color visual (<span className="text-red-400 font-bold">Rojo</span> para deudas elevadas hasta <span className="text-emerald-400 font-bold">Verde</span> para cuentas sin saldo).
+                Organizadas de mayor a menor saldo con indicador de <span className="text-cyan-300 font-semibold">Plazo Estructurado (Años / Meses)</span> y <span className="text-emerald-300 font-semibold">Pago Programado Mensual</span>.
               </p>
             </div>
 
@@ -702,6 +700,7 @@ export default function DashboardPage() {
                     <th className="py-3 px-4">Tipo de Cuenta</th>
                     <th className="py-3 px-4">N° Cuenta</th>
                     <th className="py-3 px-4">Prioridad / Nivel</th>
+                    <th className="py-3 px-4">Plazo & Pago Programado</th>
                     <th className="py-3 px-4">Saldo Actual (Debe)</th>
                     <th className="py-3 px-4">Monto en Mora</th>
                     <th className="py-3 px-4">Experian</th>
@@ -724,6 +723,7 @@ export default function DashboardPage() {
                       }
                     }
 
+                    const commentsStr = expDetail?.comments || eqDetail?.comments || tuDetail?.comments || '';
                     const style = getDebtStyle(currentBal);
 
                     return (
@@ -741,6 +741,16 @@ export default function DashboardPage() {
                         </td>
                         <td className="py-3.5 px-4">
                           {style.badge}
+                        </td>
+                        <td className="py-3.5 px-4 text-[11px] font-mono text-cyan-300 whitespace-nowrap">
+                          {commentsStr ? (
+                            <span className="flex items-center gap-1.5 font-semibold text-slate-200">
+                              <Clock className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
+                              {commentsStr}
+                            </span>
+                          ) : (
+                            <span className="text-slate-500 font-sans">Pago Directo / Revolvente</span>
+                          )}
                         </td>
                         <td className={`py-3.5 px-4 ${style.textClass}`}>
                           ${currentBal.toLocaleString(undefined, { minimumFractionDigits: 2 })}

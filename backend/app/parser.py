@@ -49,9 +49,6 @@ class CreditReportParser:
 
     @staticmethod
     def extract_scores(text: str) -> Dict[str, Optional[int]]:
-        """
-        Extracts credit scores for Experian, Equifax, TransUnion or general score from text.
-        """
         scores: Dict[str, Optional[int]] = {
             "score_experian": None,
             "score_equifax": None,
@@ -87,15 +84,11 @@ class CreditReportParser:
 
     @staticmethod
     def parse_html_report(html_content: str) -> Dict[str, Any]:
-        """
-        Parses HTML credit monitoring reports (SmartCredit, IdentityIQ, tri-bureau HTML).
-        """
         soup = BeautifulSoup(html_content, "html.parser")
         tradelines: List[Dict[str, Any]] = []
         text_content = soup.get_text()
 
         scores = CreditReportParser.extract_scores(text_content)
-
         account_blocks = soup.find_all(class_=re.compile(r"(tradeline|account-item|account-card|credit-account)", re.I))
 
         if not account_blocks:
@@ -229,10 +222,6 @@ class CreditReportParser:
 
     @staticmethod
     def parse_pdf_report(pdf_bytes: bytes) -> Dict[str, Any]:
-        """
-        Extracts text from PDF bytes via pdfplumber and parses real tradelines without fake fallbacks.
-        Supports official Equifax, Experian, TransUnion and AnnualCreditReport PDF formats.
-        """
         text_content = ""
         try:
             with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -247,11 +236,7 @@ class CreditReportParser:
 
         # ---------------------------------------------------------------------
         # Strategy 0: Official Equifax & AnnualCreditReport PDF Format
-        # Structure in Equifax PDF:
-        #   <CREDITOR_NAME>
-        #   <ADDRESS_LINE | PHONE> Date Reported: MM/DD/YYYY | Balance: $X,XXX
-        #   Account Number: *XXXX | Owner: ... Credit Limit: $X,XXX
-        #   Loan/Account Type: Auto | Status: Pays As Agreed
+        # Extract Term Duration (Plazo) & Scheduled Payment Amount (Pago Mensual)
         # ---------------------------------------------------------------------
         equifax_matches = list(re.finditer(r"Date Reported:\s*([\d/]+)\s*\|\s*Balance:\s*\$?([\d,]+)", text_content, re.I))
 
@@ -265,7 +250,6 @@ class CreditReportParser:
                 if lines_above:
                     for cand in reversed(lines_above):
                         cand_clean = re.sub(r"^[^\w]+", "", cand).strip()
-                        # Exclude address lines, phone numbers, page numbers, and system headers
                         is_metadata = any(k in cand_clean.lower() for k in [
                             "po box", "street", "road", "park", "blvd", "lane", " suite", " ave", " drive",
                             "phone:", "|", "(800)", "(888)", "(866)", "(877)", "(844)", "(833)", "(855)", "(305)", "(605)",
@@ -273,7 +257,7 @@ class CreditReportParser:
                             "did you know", "consumer file", "negative information", "inquiries",
                             "date:", "summary", "personal information", "credit accounts", "24 month history",
                             "narrative code", "payment history", "months reviewed", "terms frequency"
-                        ]) or re.search(r"\b\d{5}\b", cand_clean)  # ZIP code
+                        ]) or re.search(r"\b\d{5}\b", cand_clean)
 
                         if not is_metadata and len(cand_clean) > 2 and not cand_clean.isdigit():
                             c_name = cand_clean
@@ -296,6 +280,19 @@ class CreditReportParser:
                 past_due_m = re.search(r"Amount Past Due:\s*\$?([\d,]+)", block, re.I)
                 past_due = CreditReportParser._parse_amount(past_due_m.group(1)) if past_due_m else 0.0
 
+                term_m = re.search(r"Term Duration:\s*([^\n|]+)", block, re.I)
+                term_duration = term_m.group(1).strip() if term_m else None
+
+                pmt_m = re.search(r"Scheduled Payment Amount:\s*\$?([\d,]+)", block, re.I)
+                pmt_amount = CreditReportParser._parse_amount(pmt_m.group(1)) if pmt_m else 0.0
+
+                comment_parts = []
+                if term_duration:
+                    comment_parts.append(f"Plazo: {term_duration}")
+                if pmt_amount > 0:
+                    comment_parts.append(f"Pago Mensual: ${pmt_amount:,.2f}/mes")
+                comments_str = " | ".join(comment_parts) if comment_parts else None
+
                 dofd_m = re.search(r"Date of 1st Delinquency:\s*([\d/-]+)", block, re.I)
                 dofd = CreditReportParser._parse_date(dofd_m.group(1)) if dofd_m else None
 
@@ -308,9 +305,9 @@ class CreditReportParser:
                     "account_type": acct_type,
                     "date_opened": date_opened,
                     "bureaus": {
-                        "Experian": {"account_status": status, "current_balance": balance, "past_due_amount": past_due, "date_of_first_delinquency": dofd},
-                        "Equifax": {"account_status": status, "current_balance": balance, "past_due_amount": past_due, "date_of_first_delinquency": dofd},
-                        "TransUnion": {"account_status": status, "current_balance": balance, "past_due_amount": past_due, "date_of_first_delinquency": dofd}
+                        "Experian": {"account_status": status, "current_balance": balance, "past_due_amount": past_due, "date_of_first_delinquency": dofd, "comments": comments_str},
+                        "Equifax": {"account_status": status, "current_balance": balance, "past_due_amount": past_due, "date_of_first_delinquency": dofd, "comments": comments_str},
+                        "TransUnion": {"account_status": status, "current_balance": balance, "past_due_amount": past_due, "date_of_first_delinquency": dofd, "comments": comments_str}
                     }
                 })
 
@@ -417,10 +414,6 @@ class CreditReportParser:
 
     @staticmethod
     def parse_report(file_bytes: bytes, filename: str) -> Dict[str, Any]:
-        """
-        Dispatches parsing based on file extension (.html/.htm or .pdf).
-        Raises ValueError for unsupported formats.
-        """
         fname_lower = filename.lower()
         if fname_lower.endswith(".html") or fname_lower.endswith(".htm"):
             try:
