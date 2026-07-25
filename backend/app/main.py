@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
 import app.models  # Ensure models are registered in Base.metadata
 
-from app.routers import auth_router, parser_router, compliance_router, dispute_router, leak_router, advisor_router
+from app.routers import auth_router, parser_router, compliance_router, dispute_router, leak_router, advisor_router, optimizer_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,6 +28,7 @@ app.include_router(compliance_router.router)
 app.include_router(dispute_router.router)
 app.include_router(leak_router.router)
 app.include_router(advisor_router.router)
+app.include_router(optimizer_router.router)
 
 @app.get("/health")
 async def health_check():

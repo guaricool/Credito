@@ -27,6 +27,10 @@ import {
   ArrowRight,
   Compass,
   Zap,
+  TrendingUp,
+  CreditCard,
+  Target,
+  ChevronRight,
 } from 'lucide-react';
 
 interface BureauDetail {
@@ -119,11 +123,38 @@ interface AdvisorRecommendation {
   expected_impact: string;
 }
 
+interface OptimizationStep {
+  step_number: number;
+  category: string;
+  title: string;
+  statute_citation: string;
+  description: string;
+  potential_point_gain: string;
+  action_button_text: string;
+  action_type: string;
+}
+
+interface ScorePlan {
+  current_estimated_score: number;
+  target_potential_score: number;
+  potential_points_gain: number;
+  utilization: {
+    current_balance: number;
+    total_credit_limit: number;
+    utilization_percentage: number;
+    target_balance_10_pct: number;
+    recommended_paydown: number;
+    status: string;
+  };
+  action_roadmap: OptimizationStep[];
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const disputeSectionRef = useRef<HTMLDivElement>(null);
   const privacySectionRef = useRef<HTMLDivElement>(null);
+  const scoreOptimizerRef = useRef<HTMLDivElement>(null);
 
   const [user, setUser] = useState<any>(null);
   const [loadingUser, setLoadingUser] = useState(true);
@@ -144,6 +175,10 @@ export default function DashboardPage() {
   const [recommendations, setRecommendations] = useState<AdvisorRecommendation[]>([]);
   const [healthIndex, setHealthIndex] = useState<number>(85);
   const [loadingAdvisor, setLoadingAdvisor] = useState(false);
+
+  // Score Optimizer Plan state
+  const [scorePlan, setScorePlan] = useState<ScorePlan | null>(null);
+  const [loadingScorePlan, setLoadingScorePlan] = useState(false);
 
   // Privacy & Leak Agent states
   const [privacyScore, setPrivacyScore] = useState<number>(85);
@@ -178,7 +213,7 @@ export default function DashboardPage() {
     seconds: 45,
   });
 
-  // Check auth & fetch user profile + privacy leaks + AI Advisor recommendations
+  // Check auth & fetch user profile + privacy leaks + AI Advisor + Score Optimizer Plan
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) {
@@ -191,14 +226,15 @@ export default function DashboardPage() {
         const userRes = await api.get('/api/v1/auth/me');
         setUser(userRes.data);
 
-        // Fetch violations, campaigns, leaks, brokers, and AI advisor recommendations
-        const [violRes, campRes, scanRes, leaksRes, brokersRes, advisorRes] = await Promise.all([
+        // Fetch violations, campaigns, leaks, brokers, AI advisor, and score optimization plan
+        const [violRes, campRes, scanRes, leaksRes, brokersRes, advisorRes, scoreRes] = await Promise.all([
           api.get('/api/v1/compliance/violations').catch(() => ({ data: [] })),
           api.get('/api/v1/disputes/campaigns').catch(() => ({ data: [] })),
           api.post('/api/v1/privacy/scan').catch(() => ({ data: { privacy_score: 85 } })),
           api.get('/api/v1/privacy/leaks').catch(() => ({ data: [] })),
           api.get('/api/v1/privacy/brokers').catch(() => ({ data: [] })),
           api.get('/api/v1/advisor/recommendations').catch(() => ({ data: { recommendations: [], credit_health_index: 85 } })),
+          api.get('/api/v1/optimizer/plan').catch(() => ({ data: null })),
         ]);
 
         setViolations(violRes.data || []);
@@ -210,6 +246,10 @@ export default function DashboardPage() {
         if (advisorRes.data?.recommendations) {
           setRecommendations(advisorRes.data.recommendations);
           setHealthIndex(advisorRes.data.credit_health_index || 85);
+        }
+
+        if (scoreRes.data) {
+          setScorePlan(scoreRes.data);
         }
       } catch (err) {
         console.error('Auth check error:', err);
@@ -234,7 +274,7 @@ export default function DashboardPage() {
         return prev;
       });
     }, 1000);
-    return () => clearInterval(interval);
+    return () => setInterval(interval);
   }, []);
 
   const handleSignOut = () => {
@@ -272,10 +312,16 @@ export default function DashboardPage() {
   const handleRefreshAdvisor = async () => {
     setLoadingAdvisor(true);
     try {
-      const res = await api.get('/api/v1/advisor/recommendations');
-      if (res.data?.recommendations) {
-        setRecommendations(res.data.recommendations);
-        setHealthIndex(res.data.credit_health_index || 85);
+      const [advRes, optRes] = await Promise.all([
+        api.get('/api/v1/advisor/recommendations'),
+        api.get('/api/v1/optimizer/plan'),
+      ]);
+      if (advRes.data?.recommendations) {
+        setRecommendations(advRes.data.recommendations);
+        setHealthIndex(advRes.data.credit_health_index || 85);
+      }
+      if (optRes.data) {
+        setScorePlan(optRes.data);
       }
     } catch (err) {
       console.error('Advisor refresh error:', err);
@@ -297,6 +343,17 @@ export default function DashboardPage() {
     } else {
       setLetterType('SECTION_609');
       disputeSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+  // Execute Score Step Handler
+  const handleExecuteScoreStep = (step: OptimizationStep) => {
+    if (step.action_type === 'SECTION_609_DISPUTE') {
+      disputeSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
+    } else if (step.action_type === 'CALCULATE_PAYMENT') {
+      scoreOptimizerRef.current?.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      alert('Estrategia de Tradelines Positivos: Recomendamos contactar a un emisor de tarjetas para agregar un usuario autorizado de 5+ años de antigüedad sin saldo.');
     }
   };
 
@@ -326,7 +383,7 @@ export default function DashboardPage() {
       setViolations(auditRes.data || []);
       setUploadProgress('Audit complete!');
 
-      // Refresh Advisor
+      // Refresh Advisor & Score Plan
       handleRefreshAdvisor();
     } catch (err: any) {
       console.error('Upload / Audit error:', err);
@@ -636,6 +693,135 @@ export default function DashboardPage() {
               ))
             )}
           </div>
+        </section>
+
+        {/* NEW SECTION: Credit Score Improvement Plan & Simulator */}
+        <section ref={scoreOptimizerRef} className="glass-panel p-6 sm:p-8 rounded-2xl border border-emerald-500/30 space-y-6 bg-gradient-to-br from-slate-900/90 via-emerald-950/20 to-slate-950/90 shadow-2xl relative overflow-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+            <div>
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold uppercase tracking-wider mb-2">
+                <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+                Score Optimization Engine
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+                Credit Score Improvement Plan & Simulator
+              </h2>
+              <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                Calculates revolving card utilization targets (Statement Date rule), hard inquiry removal, and projects maximum potential credit score gains.
+              </p>
+            </div>
+
+            {/* Score Gain Meter Display */}
+            {scorePlan && (
+              <div className="flex items-center gap-4 bg-slate-950/90 p-3.5 rounded-xl border border-emerald-500/40">
+                <div className="text-center">
+                  <div className="text-[10px] text-slate-400 uppercase tracking-widest font-mono">Current</div>
+                  <div className="text-xl font-extrabold text-slate-200">{scorePlan.current_estimated_score}</div>
+                </div>
+                <div className="flex items-center text-emerald-400 font-bold text-lg">
+                  <ChevronRight className="w-5 h-5" />
+                </div>
+                <div className="text-center">
+                  <div className="text-[10px] text-emerald-400 uppercase tracking-widest font-mono">Target</div>
+                  <div className="text-2xl font-black text-emerald-400">{scorePlan.target_potential_score}</div>
+                </div>
+                <div className="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 font-black text-xs border border-emerald-500/30 font-mono whitespace-nowrap">
+                  +{scorePlan.potential_points_gain} PTS GAIN
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Utilization Calculator & Breakdown Card */}
+          {scorePlan && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Utilization Gauge */}
+              <div className="glass-panel p-5 rounded-xl border border-slate-800 bg-slate-950/90 flex flex-col justify-between space-y-4">
+                <div>
+                  <div className="flex items-center justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    <span>Revolving Utilization Rate</span>
+                    <span className="font-mono text-emerald-400 font-bold">{scorePlan.utilization.utilization_percentage}%</span>
+                  </div>
+
+                  <div className="mt-3 space-y-2">
+                    <div className="w-full bg-slate-900 rounded-full h-3 border border-slate-800 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-1000 ${
+                          scorePlan.utilization.utilization_percentage > 30
+                            ? 'bg-amber-500'
+                            : 'bg-emerald-500'
+                        }`}
+                        style={{ width: `${Math.min(100, scorePlan.utilization.utilization_percentage)}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-[10px] text-slate-500 font-mono">
+                      <span>0% (OPTIMAL)</span>
+                      <span>10% TARGET</span>
+                      <span>30% RISK</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1 text-xs">
+                  <div className="flex justify-between text-slate-300">
+                    <span>Total Card Balances:</span>
+                    <span className="font-mono font-bold">${scorePlan.utilization.current_balance.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-emerald-400">
+                    <span>Target Balance (10%):</span>
+                    <span className="font-mono font-bold">${scorePlan.utilization.target_balance_10_pct.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between text-cyan-300 pt-1 border-t border-slate-800 font-bold">
+                    <span>Paydown Required:</span>
+                    <span className="font-mono">${scorePlan.utilization.recommended_paydown.toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Roadmap List */}
+              <div className="lg:col-span-2 glass-panel p-5 rounded-xl border border-slate-800 bg-slate-950/90 space-y-4">
+                <h3 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                  <Target className="w-4 h-4 text-emerald-400" />
+                  Score Optimization Step-by-Step Roadmap
+                </h3>
+
+                <div className="space-y-3">
+                  {scorePlan.action_roadmap.map((step) => (
+                    <div
+                      key={step.step_number}
+                      className="p-4 rounded-xl border border-slate-800/90 bg-slate-900/50 hover:bg-slate-900/80 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs"
+                    >
+                      <div className="space-y-1 max-w-xl">
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-bold flex items-center justify-center border border-emerald-500/30">
+                            {step.step_number}
+                          </span>
+                          <span className="font-bold text-white text-xs">{step.title}</span>
+                          <span className="px-2 py-0.5 rounded bg-slate-950 font-mono text-[9px] text-amber-300 border border-slate-800">
+                            {step.statute_citation}
+                          </span>
+                        </div>
+                        <p className="text-slate-400 text-[11px] leading-relaxed pl-7">{step.description}</p>
+                      </div>
+
+                      <div className="flex items-center justify-between sm:justify-end gap-3 pl-7 sm:pl-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-800">
+                        <span className="font-mono text-emerald-400 font-bold text-xs whitespace-nowrap">
+                          {step.potential_point_gain}
+                        </span>
+
+                        <button
+                          onClick={() => handleExecuteScoreStep(step)}
+                          className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-200 border border-slate-700 bg-slate-800 hover:text-white hover:border-slate-600 transition-all whitespace-nowrap"
+                        >
+                          {step.action_button_text}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* FCRA 30-Day Response Window Countdown Banner */}
@@ -951,7 +1137,7 @@ export default function DashboardPage() {
                   type="text"
                   value={policeReportNumber}
                   onChange={(e) => setPoliceReportNumber(e.target.value)}
-                  placeholder="e.g. FTC-9988776655"
+                  placeholder="e.g. FTC-IDENTITY-THEFT-AFFIDAVIT-2026"
                   className="w-full px-3 py-2 rounded-xl text-xs glass-input"
                 />
               </div>
