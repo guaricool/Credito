@@ -5,15 +5,29 @@ from typing import Dict, Any, List, Optional
 from bs4 import BeautifulSoup
 import pdfplumber
 
+KNOWN_CREDITORS = [
+    "CHASE", "JPMORGAN CHASE", "CAPITAL ONE", "CITIBANK", "CITI", "DISCOVER", "BANK OF AMERICA", "BOFA",
+    "WELLS FARGO", "AMERICAN EXPRESS", "AMEX", "BARCLAYS", "BARCLAYCARD", "SYNCHRONY", "SYNCHRONY BANK",
+    "USAA", "TD BANK", "CREDIT ONE", "CREDIT ONE BANK", "NAVY FEDERAL", "NAVY FEDERAL CU", "FIFTH THIRD",
+    "PNC", "PNC BANK", "U.S. BANK", "US BANK", "TRUIST", "HUNTINGTON", "KEYBANK", "CITIZENS BANK",
+    "MIDLAND CREDIT", "MIDLAND FUNDING", "PORTFOLIO RECOVERY", "PRA RECEIVABLES", "LVNV FUNDING",
+    "RESURGENT", "CAVALRY", "CAVALRY SPV", "JEFFERSON CAPITAL", "DEBT RECOVERY", "CONVERGENT",
+    "NAVient", "NELNET", "GREAT LAKES", "MOHELA", "AIDVANTAGE", "FIRST PREMIER", "FIRST PREMIER BANK",
+    "DESTINY", "BEST BUY", "HOME DEPOT", "TARGET", "KOHLS", "MACYS", "SEARS", "WALMART",
+    "CARMAX", "TOYOTA FINANCIAL", "HONDA FINANCIAL", "FORD MOTOR CREDIT", "NISSAN ACCEPTANCE",
+    "UPSTART", "SOFI", "MARCUS", "LENDINGCLUB", "AVANT", "ONEMAIN", "ONEMAIN FINANCIAL",
+    "WEBBANK", "CELTIC BANK", "DESERVE", "PROSPER", "OPPORTUNITY FINANCIAL", "OPPFI"
+]
+
 class CreditReportParser:
     @staticmethod
     def _parse_date(date_str: Optional[str]) -> Optional[str]:
         if not date_str or not isinstance(date_str, str):
             return None
         date_str = date_str.strip()
-        if not date_str or date_str.lower() in ("n/a", "none", "--", "-", "null"):
+        if not date_str or date_str.lower() in ("n/a", "none", "--", "-", "null", "unknown"):
             return None
-        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%B %d, %Y", "%b %d, %Y", "%Y/%m/%d"):
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%m-%d-%Y", "%B %d, %Y", "%b %d, %Y", "%Y/%m/%d", "%m/%Y"):
             try:
                 dt = datetime.strptime(date_str, fmt)
                 return dt.strftime("%Y-%m-%d")
@@ -34,14 +48,57 @@ class CreditReportParser:
             return 0.0
 
     @staticmethod
+    def extract_scores(text: str) -> Dict[str, Optional[int]]:
+        """
+        Extracts credit scores for Experian, Equifax, TransUnion or general score from text.
+        """
+        scores: Dict[str, Optional[int]] = {
+            "score_experian": None,
+            "score_equifax": None,
+            "score_transunion": None,
+            "credit_score": None
+        }
+        
+        # Experian
+        exp_m = re.search(r"Experian(?:\s+FICO|\s+VantageScore|\s+Score)?[:\s]+(\d{3})", text, re.I)
+        if exp_m:
+            score_val = int(exp_m.group(1))
+            if 300 <= score_val <= 850:
+                scores["score_experian"] = score_val
+
+        # Equifax
+        eq_m = re.search(r"Equifax(?:\s+FICO|\s+VantageScore|\s+Score)?[:\s]+(\d{3})", text, re.I)
+        if eq_m:
+            score_val = int(eq_m.group(1))
+            if 300 <= score_val <= 850:
+                scores["score_equifax"] = score_val
+
+        # TransUnion
+        tu_m = re.search(r"TransUnion(?:\s+FICO|\s+VantageScore|\s+Score)?[:\s]+(\d{3})", text, re.I)
+        if tu_m:
+            score_val = int(tu_m.group(1))
+            if 300 <= score_val <= 850:
+                scores["score_transunion"] = score_val
+
+        # General FICO / VantageScore
+        gen_m = re.search(r"(?:FICO|VantageScore|Credit\s+Score)[:\s]+(\d{3})", text, re.I)
+        if gen_m:
+            score_val = int(gen_m.group(1))
+            if 300 <= score_val <= 850:
+                scores["credit_score"] = score_val
+
+        return scores
+
+    @staticmethod
     def parse_html_report(html_content: str) -> Dict[str, Any]:
         """
         Parses HTML credit monitoring reports (SmartCredit, IdentityIQ, tri-bureau HTML).
-        Extracts creditor names, masked account numbers, account types, balances,
-        account statuses, and DOFD per bureau (Experian, Equifax, TransUnion).
         """
         soup = BeautifulSoup(html_content, "html.parser")
         tradelines: List[Dict[str, Any]] = []
+        text_content = soup.get_text()
+
+        scores = CreditReportParser.extract_scores(text_content)
 
         # Strategy 1: Look for structured account sections or containers
         account_blocks = soup.find_all(class_=re.compile(r"(tradeline|account-item|account-card|credit-account)", re.I))
@@ -89,6 +146,8 @@ class CreditReportParser:
                                 bureaus["Experian"]["past_due_amount"] = CreditReportParser._parse_amount(cells[1])
                                 bureaus["Equifax"]["past_due_amount"] = CreditReportParser._parse_amount(cells[2])
                                 bureaus["TransUnion"]["past_due_amount"] = CreditReportParser._parse_amount(cells[3])
+                            elif len(cells) >= 2:
+                                bureaus["Experian"]["past_due_amount"] = CreditReportParser._parse_amount(cells[1])
                         elif any(k in label for k in ["status", "account status"]):
                             if len(cells) >= 4:
                                 bureaus["Experian"]["account_status"] = cells[1]
@@ -108,7 +167,7 @@ class CreditReportParser:
                         tradelines.append({
                             "creditor_name": creditor_name or "Unknown Creditor",
                             "account_number_masked": account_number or "****",
-                            "account_type": account_type or "Unknown",
+                            "account_type": account_type or "Revolving",
                             "date_opened": CreditReportParser._parse_date(date_opened),
                             "bureaus": bureaus
                         })
@@ -157,55 +216,6 @@ class CreditReportParser:
                     "bureaus": bureaus
                 })
 
-        # Fallback for generic HTML table structures
-        if not tradelines:
-            tables = soup.find_all("table")
-            for table in tables:
-                rows = table.find_all("tr")
-                for row in rows[1:]:
-                    cols = [c.get_text(strip=True) for c in row.find_all(["td", "th"])]
-                    if len(cols) >= 2:
-                        creditor_name = cols[0]
-                        balance = CreditReportParser._parse_amount(cols[1])
-                        account_number = cols[2] if len(cols) > 2 else "****1234"
-                        account_type = cols[3] if len(cols) > 3 else "Revolving"
-                        status = cols[4] if len(cols) > 4 else "Derogatory"
-                        dofd = CreditReportParser._parse_date(cols[5]) if len(cols) > 5 else None
-
-                        tradelines.append({
-                            "creditor_name": creditor_name,
-                            "account_number_masked": account_number,
-                            "account_type": account_type,
-                            "date_opened": None,
-                            "bureaus": {
-                                "Experian": {"account_status": status, "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": dofd},
-                                "Equifax": {"account_status": status, "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": dofd},
-                                "TransUnion": {"account_status": status, "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": dofd}
-                            }
-                        })
-                        break
-
-        # Fallback default template if unstructured text
-        if not tradelines:
-            text = soup.get_text()
-            creditor_match = re.search(r"(?:Creditor|Account):\s*([A-Za-z0-9\s]+)", text, re.I)
-            c_name = creditor_match.group(1).strip() if creditor_match else "Sample Creditor Bank"
-
-            acct_match = re.search(r"Account\s*#:\s*([*\d\w-]+)", text, re.I)
-            acct_num = acct_match.group(1).strip() if acct_match else "****1234"
-
-            tradelines.append({
-                "creditor_name": c_name,
-                "account_number_masked": acct_num,
-                "account_type": "Revolving",
-                "date_opened": None,
-                "bureaus": {
-                    "Experian": {"account_status": "Derogatory", "current_balance": 500.0, "past_due_amount": 0.0, "date_of_first_delinquency": "2018-05-10"},
-                    "Equifax": {"account_status": "Open", "current_balance": 0.0, "past_due_amount": 0.0, "date_of_first_delinquency": None},
-                    "TransUnion": {"account_status": "Derogatory", "current_balance": 500.0, "past_due_amount": 0.0, "date_of_first_delinquency": "2018-05-10"}
-                }
-            })
-
         source_provider = "HTML Report"
         if "smartcredit" in html_content.lower():
             source_provider = "SmartCredit"
@@ -214,51 +224,63 @@ class CreditReportParser:
         elif "experian" in html_content.lower():
             source_provider = "Experian HTML"
 
-        return {
+        res = {
             "source_provider": source_provider,
             "report_date": date.today().strftime("%Y-%m-%d"),
             "total_tradelines": len(tradelines),
             "tradelines": tradelines
         }
+        res.update(scores)
+        return res
 
     @staticmethod
     def parse_pdf_report(pdf_bytes: bytes) -> Dict[str, Any]:
         """
-        Extracts text from PDF bytes via pdfplumber, parses tradeline details across 3 bureaus.
+        Extracts text from PDF bytes via pdfplumber and parses real tradelines without fake fallbacks.
         """
         text_content = ""
         try:
             with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
                 for page in pdf.pages:
-                    text_content += (page.extract_text() or "") + "\n"
-        except Exception:
+                    page_text = page.extract_text() or ""
+                    text_content += page_text + "\n"
+        except Exception as e:
             text_content = ""
 
+        scores = CreditReportParser.extract_scores(text_content)
         tradelines: List[Dict[str, Any]] = []
 
-        creditor_matches = list(re.finditer(r"(?:Creditor|Account Name|Lender):\s*([^\n]+)", text_content, re.I))
+        # Strategy A: Match by explicit field headers (Creditor:, Account Name:, Lender:)
+        creditor_matches = list(re.finditer(r"(?:Creditor|Account Name|Lender|Original Creditor|Company Name)[:\s]+([^\n]+)", text_content, re.I))
 
         if creditor_matches:
             for idx, match in enumerate(creditor_matches):
                 c_name = match.group(1).strip()
+                # Exclude header noise
+                if len(c_name) > 60 or c_name.lower() in ("experian", "equifax", "transunion", "summary", "report"):
+                    continue
+
                 start_pos = match.start()
                 end_pos = creditor_matches[idx + 1].start() if idx + 1 < len(creditor_matches) else len(text_content)
                 block = text_content[start_pos:end_pos]
 
-                acct_m = re.search(r"(?:Account\s*#|Account Number):\s*([*\d\w-]+)", block, re.I)
-                acct_num = acct_m.group(1).strip() if acct_m else "****9999"
+                acct_m = re.search(r"(?:Account\s*#|Account Number|Acct\s*#)[:\s]+([*\w-]+)", block, re.I)
+                acct_num = acct_m.group(1).strip() if acct_m else "****"
 
-                type_m = re.search(r"(?:Account Type|Type):\s*([^\n]+)", block, re.I)
-                acct_type = type_m.group(1).strip() if type_m else "Collection"
+                type_m = re.search(r"(?:Account Type|Type)[:\s]+([^\n]+)", block, re.I)
+                acct_type = type_m.group(1).strip() if type_m else "Revolving"
 
-                bal_m = re.search(r"(?:Balance|Current Balance):\s*\$?([\d,]+(?:\.\d{2})?)", block, re.I)
-                balance = CreditReportParser._parse_amount(bal_m.group(1)) if bal_m else 1200.0
+                bal_m = re.search(r"(?:Balance|Current Balance|Amount Owed)[:\s]+\$?([\d,]+(?:\.\d{2})?)", block, re.I)
+                balance = CreditReportParser._parse_amount(bal_m.group(1)) if bal_m else 0.0
 
-                status_m = re.search(r"(?:Status|Account Status):\s*([^\n]+)", block, re.I)
-                status = status_m.group(1).strip() if status_m else "In Collection"
+                past_due_m = re.search(r"(?:Past Due|Amount Past Due)[:\s]+\$?([\d,]+(?:\.\d{2})?)", block, re.I)
+                past_due = CreditReportParser._parse_amount(past_due_m.group(1)) if past_due_m else 0.0
 
-                dofd_m = re.search(r"(?:DOFD|First Delinquency|Date of Delinquency):\s*([\d/-]+)", block, re.I)
-                dofd = CreditReportParser._parse_date(dofd_m.group(1)) if dofd_m else "2016-01-15"
+                status_m = re.search(r"(?:Status|Account Status)[:\s]+([^\n]+)", block, re.I)
+                status = status_m.group(1).strip() if status_m else "Reported"
+
+                dofd_m = re.search(r"(?:DOFD|First Delinquency|Date of Delinquency)[:\s]+([\d/-]+)", block, re.I)
+                dofd = CreditReportParser._parse_date(dofd_m.group(1)) if dofd_m else None
 
                 tradelines.append({
                     "creditor_name": c_name,
@@ -266,24 +288,78 @@ class CreditReportParser:
                     "account_type": acct_type,
                     "date_opened": None,
                     "bureaus": {
-                        "Experian": {"account_status": status, "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": dofd},
-                        "Equifax": {"account_status": status, "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": dofd},
-                        "TransUnion": {"account_status": status, "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": dofd}
+                        "Experian": {"account_status": status, "current_balance": balance, "past_due_amount": past_due, "date_of_first_delinquency": dofd},
+                        "Equifax": {"account_status": status, "current_balance": balance, "past_due_amount": past_due, "date_of_first_delinquency": dofd},
+                        "TransUnion": {"account_status": status, "current_balance": balance, "past_due_amount": past_due, "date_of_first_delinquency": dofd}
                     }
                 })
 
+        # Strategy B: Match by Known Financial Institution Names in PDF Text
         if not tradelines:
-            tradelines.append({
-                "creditor_name": "Collection Agency LLC",
-                "account_number_masked": "****9999",
-                "account_type": "Collection",
-                "date_opened": None,
-                "bureaus": {
-                    "Experian": {"account_status": "In Collection", "current_balance": 1200.0, "past_due_amount": 0.0, "date_of_first_delinquency": "2016-01-15"},
-                    "Equifax": {"account_status": "In Collection", "current_balance": 1200.0, "past_due_amount": 0.0, "date_of_first_delinquency": "2016-01-15"},
-                    "TransUnion": {"account_status": "In Collection", "current_balance": 1200.0, "past_due_amount": 0.0, "date_of_first_delinquency": "2016-01-15"}
-                }
-            })
+            for creditor in KNOWN_CREDITORS:
+                # Find all occurrences of known creditor names
+                pattern = re.compile(rf"\b({re.escape(creditor)}[A-Za-z0-9\s]*)\b", re.I)
+                for match in pattern.finditer(text_content):
+                    start_pos = match.start()
+                    block = text_content[start_pos:start_pos + 400]
+                    c_name = match.group(1).strip()
+                    if len(c_name) > 40:
+                        c_name = creditor
+
+                    # Check if already added
+                    if any(t["creditor_name"].lower() == c_name.lower() for t in tradelines):
+                        continue
+
+                    acct_m = re.search(r"(?:#|Account|Acct)?[:\s]*([*\d]{4,16})", block, re.I)
+                    acct_num = f"****{acct_m.group(1)[-4:]}" if acct_m else "****"
+
+                    bal_m = re.search(r"\$?([\d,]+\.\d{2})", block)
+                    balance = CreditReportParser._parse_amount(bal_m.group(1)) if bal_m else 0.0
+
+                    status_m = re.search(r"(Open|Paid|Derogatory|Collection|Late|Charge-off|Closed)", block, re.I)
+                    status = status_m.group(1) if status_m else "Reported"
+
+                    tradelines.append({
+                        "creditor_name": c_name,
+                        "account_number_masked": acct_num,
+                        "account_type": "Revolving" if "card" in c_name.lower() or "bank" in c_name.lower() else "Account",
+                        "date_opened": None,
+                        "bureaus": {
+                            "Experian": {"account_status": status, "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": None},
+                            "Equifax": {"account_status": status, "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": None},
+                            "TransUnion": {"account_status": status, "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": None}
+                        }
+                    })
+
+        # Strategy C: Generic Line-by-Line Table Parser (detects lines with balances and account numbers)
+        if not tradelines:
+            lines = [l.strip() for l in text_content.split("\n") if l.strip()]
+            for line in lines:
+                # Look for lines with currency amounts ($XXX.XX) and text
+                money_matches = re.findall(r"\$?([\d,]+\.\d{2})", line)
+                if money_matches and len(line) > 10:
+                    # Exclude summary lines
+                    if any(kw in line.lower() for kw in ["total", "summary", "page", "score", "inquiries"]):
+                        continue
+                    
+                    parts = line.split()
+                    c_name = parts[0] if len(parts) > 0 else "Credit Account"
+                    if len(c_name) < 2 or c_name.isdigit():
+                        c_name = "Credit Account"
+
+                    balance = CreditReportParser._parse_amount(money_matches[0])
+                    if balance > 0:
+                        tradelines.append({
+                            "creditor_name": c_name,
+                            "account_number_masked": "****",
+                            "account_type": "Revolving",
+                            "date_opened": None,
+                            "bureaus": {
+                                "Experian": {"account_status": "Reported", "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": None},
+                                "Equifax": {"account_status": "Reported", "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": None},
+                                "TransUnion": {"account_status": "Reported", "current_balance": balance, "past_due_amount": 0.0, "date_of_first_delinquency": None}
+                            }
+                        })
 
         source_provider = "PDF Report"
         if "experian" in text_content.lower():
@@ -293,13 +369,15 @@ class CreditReportParser:
         elif "transunion" in text_content.lower():
             source_provider = "TransUnion PDF"
 
-        return {
+        res = {
             "source_provider": source_provider,
             "report_date": date.today().strftime("%Y-%m-%d"),
             "extracted_length": len(text_content),
             "total_tradelines": len(tradelines),
             "tradelines": tradelines
         }
+        res.update(scores)
+        return res
 
     @staticmethod
     def parse_report(file_bytes: bytes, filename: str) -> Dict[str, Any]:
