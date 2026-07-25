@@ -37,6 +37,8 @@ import {
   ExternalLink,
   DollarSign,
   PieChart,
+  Home,
+  Car,
 } from 'lucide-react';
 
 interface BureauDetail {
@@ -147,6 +149,9 @@ interface ScorePlan {
   potential_points_gain: number;
   utilization: {
     current_balance: number;
+    revolving_balance?: number;
+    installment_balance?: number;
+    total_real_debt?: number;
     total_past_due?: number;
     total_credit_limit: number;
     utilization_percentage: number;
@@ -195,13 +200,11 @@ export default function DashboardPage() {
   // AI Advisor states
   const [recommendations, setRecommendations] = useState<AdvisorRecommendation[]>([]);
   const [healthIndex, setHealthIndex] = useState<number>(0);
-  const [loadingAdvisor, setLoadingAdvisor] = useState(false);
 
   // Score Optimizer Plan state
   const [scorePlan, setScorePlan] = useState<ScorePlan | null>(null);
 
   // Privacy & Leak Agent states
-  const [privacyScore, setPrivacyScore] = useState<number>(100);
   const [leaks, setLeaks] = useState<DataLeak[]>([]);
   const [brokerRequests, setBrokerRequests] = useState<OptOutRequest[]>([]);
 
@@ -209,15 +212,6 @@ export default function DashboardPage() {
   const [showNoticeModal, setShowNoticeModal] = useState(false);
   const [noticePreviews, setNoticePreviews] = useState<NoticePreview[]>([]);
   const [selectedPreviewIndex, setSelectedPreviewIndex] = useState(0);
-  const [loadingPreviews, setLoadingPreviews] = useState(false);
-
-  // FCRA 605B Block Affidavit states
-  const [blockBureau, setBlockBureau] = useState('Experian');
-  const [policeReportNumber, setPoliceReportNumber] = useState('FTC-IDENTITY-THEFT-AFFIDAVIT-2026');
-  const [fraudulentAccounts, setFraudulentAccounts] = useState('');
-  const [generatingBlock, setGeneratingBlock] = useState(false);
-  const [blockMarkdown, setBlockMarkdown] = useState<string | null>(null);
-  const [copyBlockSuccess, setCopyBlockSuccess] = useState(false);
 
   // Dispute form states
   const [letterType, setLetterType] = useState<'SECTION_609' | 'DEBT_VALIDATION' | 'MOV'>('SECTION_609');
@@ -308,44 +302,6 @@ export default function DashboardPage() {
     }
   };
 
-  // Refresh AI Advisor recommendations
-  const handleRefreshAdvisor = async () => {
-    setLoadingAdvisor(true);
-    try {
-      const [advRes, optRes] = await Promise.all([
-        api.get('/api/v1/advisor/recommendations'),
-        api.get('/api/v1/optimizer/plan'),
-      ]);
-      if (advRes.data?.recommendations) {
-        setRecommendations(advRes.data.recommendations);
-        setHealthIndex(advRes.data.credit_health_index || 0);
-      }
-      if (optRes.data) {
-        setScorePlan(optRes.data);
-      }
-    } catch (err) {
-      console.error('Advisor refresh error:', err);
-    } finally {
-      setLoadingAdvisor(false);
-    }
-  };
-
-  // Execute recommendation handler (pre-fills form & scrolls)
-  const handleExecuteRecommendation = (rec: AdvisorRecommendation) => {
-    if (rec.action_type === 'FCRA_605B_BLOCK') {
-      privacySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-    } else if (rec.action_type === 'CCPA_OPT_OUT') {
-      privacySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-      handleOpenNoticeInspector();
-    } else if (rec.action_type === 'DEBT_VALIDATION') {
-      setLetterType('DEBT_VALIDATION');
-      disputeSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-    } else {
-      setLetterType('SECTION_609');
-      disputeSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  };
-
   // Execute Score Step Handler
   const handleExecuteScoreStep = (step: OptimizationStep) => {
     if (step.action_type === 'SECTION_609_DISPUTE') {
@@ -386,8 +342,11 @@ export default function DashboardPage() {
       setViolations(auditRes.data || []);
       setUploadProgress('Audit complete!');
 
-      // Refresh Advisor & Score Plan
-      await handleRefreshAdvisor();
+      // Step 3: Refresh Score Plan
+      const optRes = await api.get('/api/v1/optimizer/plan');
+      if (optRes.data) {
+        setScorePlan(optRes.data);
+      }
 
       // Scroll to accounts breakdown
       accountsSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -400,57 +359,9 @@ export default function DashboardPage() {
     }
   };
 
-  // Open Legal Notice Inspector Modal & Fetch Previews
-  const handleOpenNoticeInspector = async () => {
-    setLoadingPreviews(true);
-    try {
-      const previewRes = await api.get('/api/v1/privacy/opt-out/previews');
-      setNoticePreviews(previewRes.data || []);
-      setSelectedPreviewIndex(0);
-      setShowNoticeModal(true);
-    } catch (err) {
-      console.error('Error fetching opt-out previews:', err);
-      alert('Could not generate notice previews.');
-    } finally {
-      setLoadingPreviews(false);
-    }
-  };
-
   // Open Mailto link locally without making external server API requests
   const handleMailtoDispatch = (mailtoLink: string) => {
     window.location.href = mailtoLink;
-  };
-
-  // Generate FCRA 605B Block Affidavit
-  const handleGenerateFCRA605B = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setGeneratingBlock(true);
-    setBlockMarkdown(null);
-
-    const tradelinesList = fraudulentAccounts
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-
-    if (tradelinesList.length === 0) {
-      tradelinesList.push('FRAUDULENT ACCOUNT EXPOSED IN CREDIT AUDIT');
-    }
-
-    try {
-      const payload = {
-        bureau: blockBureau,
-        police_report_or_affidavit_number: policeReportNumber,
-        fraudulent_tradelines: tradelinesList,
-      };
-
-      const res = await api.post('/api/v1/privacy/fcra-605b', payload);
-      setBlockMarkdown(res.data.content_markdown);
-    } catch (err: any) {
-      console.error('FCRA 605B Affidavit generation error:', err);
-      alert(err.response?.data?.detail || 'Failed to generate FCRA 605B affidavit.');
-    } finally {
-      setGeneratingBlock(false);
-    }
   };
 
   // Toggle selection for dispute generation
@@ -465,7 +376,6 @@ export default function DashboardPage() {
     setTargetName(t.creditor_name);
     setAccountNumber(t.account_number_masked);
     
-    // Find max balance
     let maxBal = 0;
     for (const b of t.bureau_details) {
       if (b.current_balance && Number(b.current_balance) > maxBal) {
@@ -505,7 +415,7 @@ export default function DashboardPage() {
     } catch (err: any) {
       console.error('Dispute generation error:', err);
       alert(err.response?.data?.detail || 'Failed to generate dispute letter.');
-    } finally {
+    } flexally {
       setGenerating(false);
     }
   };
@@ -529,25 +439,6 @@ export default function DashboardPage() {
     document.body.removeChild(link);
   };
 
-  const handleCopyBlockMarkdown = () => {
-    if (!blockMarkdown) return;
-    navigator.clipboard.writeText(blockMarkdown);
-    setCopyBlockSuccess(true);
-    setTimeout(() => setCopyBlockSuccess(false), 2000);
-  };
-
-  const handleDownloadBlockMarkdown = () => {
-    if (!blockMarkdown) return;
-    const blob = new Blob([blockMarkdown], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `FCRA_Section_605B_Affidavit_${blockBureau.replace(/\s+/g, '_')}.md`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   if (loadingUser) {
     return (
       <div className="min-h-screen bg-[#050811] flex items-center justify-center text-slate-300">
@@ -560,6 +451,9 @@ export default function DashboardPage() {
   }
 
   const hasData = scorePlan?.has_data || tradelines.length > 0;
+  const revolvingBal = scorePlan?.utilization.revolving_balance || scorePlan?.utilization.current_balance || 0;
+  const installmentBal = scorePlan?.utilization.installment_balance || 0;
+  const totalRealDebt = scorePlan?.utilization.total_real_debt || (revolvingBal + installmentBal);
 
   return (
     <div className="min-h-screen bg-[#050811] text-slate-100 flex flex-col pb-16 relative">
@@ -607,7 +501,7 @@ export default function DashboardPage() {
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-6 pt-8 space-y-8 flex-1 w-full">
         
-        {/* SECTION 1: Credit Report Uploader (Clean Initial Focus) */}
+        {/* SECTION 1: Credit Report Uploader */}
         <section className="glass-panel p-6 sm:p-8 rounded-2xl border border-cyan-500/30 space-y-6 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 shadow-2xl relative overflow-hidden">
           <div className="flex items-center justify-between">
             <div>
@@ -619,7 +513,7 @@ export default function DashboardPage() {
                 Subir Reporte de Crédito Tri-Buró (PDF / HTML)
               </h2>
               <p className="text-xs text-slate-400 mt-1 max-w-2xl">
-                Cargue su reporte oficial de Experian, Equifax o TransUnion. El sistema analizará con precisión absoluta cada cuenta, tarjeta de crédito, préstamo, saldo adeudado y monto en mora.
+                Cargue su reporte oficial de Experian, Equifax o TransUnion. El sistema analizará cada tarjeta de crédito, préstamo de auto e hipoteca sin duplicar balances.
               </p>
             </div>
           </div>
@@ -663,7 +557,7 @@ export default function DashboardPage() {
                   <p className="text-sm font-medium text-slate-200">
                     <span className="font-semibold text-cyan-400">Haga clic aquí</span> o arrastre su archivo PDF/HTML de reporte de crédito
                   </p>
-                  <p className="text-xs text-slate-500 mt-1">Soporta reportes oficiales de Experian, Equifax, TransUnion, SmartCredit e IdentityIQ</p>
+                  <p className="text-xs text-slate-500 mt-1">Soporta reportes oficiales de Equifax, Experian, TransUnion, AnnualCreditReport, SmartCredit e IdentityIQ</p>
                 </div>
               )}
             </div>
@@ -694,7 +588,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Dashboard Overview Cards (Real Clean / Audited States) */}
+        {/* Dashboard Overview Cards (Real Clean / Categorized Debt Breakdown) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-center gap-4">
             <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
@@ -711,20 +605,22 @@ export default function DashboardPage() {
               <DollarSign className="w-6 h-6" />
             </div>
             <div>
-              <div className="text-2xl font-black text-red-400">
-                ${(scorePlan?.utilization.current_balance || 0).toLocaleString()}
+              <div className="text-xl font-black text-red-400 font-mono">
+                ${revolvingBal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </div>
-              <div className="text-xs text-slate-400">Deuda Total Acumulada</div>
+              <div className="text-[11px] text-slate-400 font-semibold">Deuda Tarjetas de Crédito</div>
             </div>
           </div>
 
           <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400">
-              <AlertTriangle className="w-6 h-6" />
+            <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+              <Home className="w-6 h-6" />
             </div>
             <div>
-              <div className="text-2xl font-black text-white">{violations.length}</div>
-              <div className="text-xs text-slate-400">Inexactitudes / Errores FCRA</div>
+              <div className="text-xl font-black text-indigo-300 font-mono">
+                ${installmentBal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </div>
+              <div className="text-[11px] text-slate-400 font-semibold">Hipotecas y Autos</div>
             </div>
           </div>
 
@@ -736,10 +632,30 @@ export default function DashboardPage() {
               <div className="text-2xl font-black text-emerald-400">
                 {scorePlan?.utilization.utilization_percentage || 0}%
               </div>
-              <div className="text-xs text-slate-400">Tasa de Utilización Real</div>
+              <div className="text-xs text-slate-400">Utilización Revolvente</div>
             </div>
           </div>
         </div>
+
+        {/* Real Debt Total Banner */}
+        {hasData && (
+          <div className="p-4 rounded-xl border border-cyan-500/30 bg-cyan-500/5 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-cyan-500/10 text-cyan-400">
+                <ShieldCheck className="w-5 h-5" />
+              </div>
+              <div>
+                <span className="text-xs text-slate-400 uppercase tracking-wider font-mono">Deuda Total Real Consolidada (Sin Duplicados de Buró):</span>
+                <div className="text-lg font-black text-cyan-300 font-mono">
+                  ${totalRealDebt.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            </div>
+            <div className="text-xs text-right text-slate-400 hidden sm:block">
+              Desglose: Tarjetas <span className="text-red-400 font-bold font-mono">${revolvingBal.toLocaleString()}</span> + Hipotecas/Autos <span className="text-indigo-300 font-bold font-mono">${installmentBal.toLocaleString()}</span>
+            </div>
+          </div>
+        )}
 
         {/* SECTION 2: Complete Tri-Bureau Accounts & Debts Breakdown Table */}
         <section ref={accountsSectionRef} className="glass-panel p-6 sm:p-8 rounded-2xl border border-slate-800 space-y-6">
@@ -783,7 +699,7 @@ export default function DashboardPage() {
                     const eqDetail = t.bureau_details.find((b) => b.bureau === 'Equifax');
                     const tuDetail = t.bureau_details.find((b) => b.bureau === 'TransUnion');
 
-                    // Max balance and past due
+                    // Max balance and past due across reported bureaus for this single account
                     let currentBal = 0;
                     let pastDue = 0;
                     for (const b of t.bureau_details) {
@@ -890,7 +806,7 @@ export default function DashboardPage() {
               <div className="glass-panel p-5 rounded-xl border border-slate-800 bg-slate-950/90 flex flex-col justify-between space-y-4">
                 <div>
                   <div className="flex items-center justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                    <span>Tasa de Utilización Revolvente</span>
+                    <span>Utilización en Tarjetas de Crédito</span>
                     <span className="font-mono text-emerald-400 font-bold">{scorePlan.utilization.utilization_percentage}%</span>
                   </div>
 
@@ -915,16 +831,16 @@ export default function DashboardPage() {
 
                 <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1 text-xs">
                   <div className="flex justify-between text-slate-300">
-                    <span>Saldos Totales en Tarjetas:</span>
-                    <span className="font-mono font-bold">${scorePlan.utilization.current_balance.toLocaleString()}</span>
+                    <span>Saldos Tarjetas de Crédito:</span>
+                    <span className="font-mono font-bold">${revolvingBal.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-emerald-400">
                     <span>Saldo Objetivo (10%):</span>
-                    <span className="font-mono font-bold">${scorePlan.utilization.target_balance_10_pct.toLocaleString()}</span>
+                    <span className="font-mono font-bold">${scorePlan.utilization.target_balance_10_pct.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex justify-between text-cyan-300 pt-1 border-t border-slate-800 font-bold">
                     <span>Monto Recomendado a Pagar:</span>
-                    <span className="font-mono">${scorePlan.utilization.recommended_paydown.toLocaleString()}</span>
+                    <span className="font-mono">${scorePlan.utilization.recommended_paydown.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
                   </div>
                 </div>
               </div>
@@ -1216,115 +1132,6 @@ export default function DashboardPage() {
           </div>
         </section>
       </main>
-
-      {/* CCPA LEGAL NOTICE INSPECTOR & LOCAL MAILTO MODAL */}
-      {showNoticeModal && noticePreviews.length > 0 && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#0b1021] border border-indigo-500/40 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
-            {/* Modal Header */}
-            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/80">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
-                  <Mail className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-white text-base">
-                    Inspector de Notificaciones Legales CCPA / CPRA
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Inspeccione el texto legal redactado para cada Data Broker y envíelo directamente desde su correo personal.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setShowNoticeModal(false)}
-                className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Modal Main Body */}
-            <div className="flex-1 flex flex-col md:flex-row overflow-hidden divide-y md:divide-y-0 md:divide-x divide-slate-800">
-              {/* Left Broker Tabs List */}
-              <div className="w-full md:w-64 p-3 space-y-2 bg-slate-950/60 overflow-y-auto max-h-48 md:max-h-none">
-                <div className="text-[10px] font-mono uppercase text-slate-400 px-2 py-1 tracking-wider">
-                  Bases de Datos ({noticePreviews.length})
-                </div>
-                {noticePreviews.map((preview, idx) => (
-                  <button
-                    key={preview.request_id}
-                    onClick={() => setSelectedPreviewIndex(idx)}
-                    className={`w-full text-left p-3 rounded-xl border text-xs transition-all flex flex-col gap-1 ${
-                      selectedPreviewIndex === idx
-                        ? 'bg-indigo-600/20 border-indigo-500/60 text-white font-bold'
-                        : 'border-slate-800/80 text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="truncate">{preview.broker_name}</span>
-                      <span className="text-[9px] font-mono text-cyan-400">{preview.confirmation_ref.slice(0, 8)}</span>
-                    </div>
-                    <div className="text-[10px] font-mono text-slate-500 truncate">{preview.target_email}</div>
-                  </button>
-                ))}
-              </div>
-
-              {/* Right Notice Document Viewer */}
-              <div className="flex-1 p-5 flex flex-col space-y-3 bg-slate-950/90 overflow-y-auto">
-                {noticePreviews[selectedPreviewIndex] && (
-                  <>
-                    <div className="space-y-2 border-b border-slate-800 pb-3">
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400 font-mono">Correo Destinatario:</span>
-                        <span className="font-mono font-bold text-cyan-300">
-                          {noticePreviews[selectedPreviewIndex].target_email}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between text-xs">
-                        <span className="text-slate-400 font-mono">Asunto:</span>
-                        <span className="font-mono font-bold text-amber-300">
-                          {noticePreviews[selectedPreviewIndex].subject}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex-1 p-4 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap overflow-y-auto">
-                      {noticePreviews[selectedPreviewIndex].body_text}
-                    </div>
-
-                    <div className="pt-2 flex justify-end">
-                      <button
-                        onClick={() => handleMailtoDispatch(noticePreviews[selectedPreviewIndex].mailto_link)}
-                        className="px-6 py-3 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-500 via-purple-600 to-indigo-600 hover:opacity-95 shadow-lg shadow-indigo-500/20 transition-all flex items-center gap-2"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                        <span>Abrir Correo Personal y Enviar (Mailto)</span>
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-
-            {/* Modal Action Footer */}
-            <div className="p-4 border-t border-slate-800 bg-slate-950 flex items-center justify-between">
-              <div className="text-xs text-slate-400 font-mono flex items-center gap-2">
-                <CheckCircle className="w-4 h-4 text-emerald-400" />
-                <span>Formateado según Cal. Civ. Code § 1798.105 & § 1798.135.</span>
-              </div>
-
-              <button
-                onClick={() => setShowNoticeModal(false)}
-                className="px-5 py-2 rounded-xl text-xs font-bold text-slate-300 border border-slate-700 bg-slate-900 hover:text-white transition-colors"
-              >
-                Cerrar Inspector
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
