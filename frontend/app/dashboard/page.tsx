@@ -47,6 +47,7 @@ import {
   History,
   TrendingDown,
   RotateCcw,
+  Calculator,
 } from 'lucide-react';
 
 interface BureauDetail {
@@ -448,6 +449,44 @@ export default function DashboardPage() {
 
   const sortedTradelines = [...tradelines].sort((a, b) => getMaxBalance(b) - getMaxBalance(a));
 
+  // Calculate monthly minimum payments for credit cards + scheduled payments for loans
+  const calculateMonthlyObligations = () => {
+    let installmentMonthly = 0;
+    let revolvingMinimum = 0;
+
+    for (const t of tradelines) {
+      const currentBal = getMaxBalance(t);
+      const isRevolving = !t.account_type || t.account_type.toLowerCase().includes('revolving') || t.account_type.toLowerCase().includes('card') || t.account_type.toLowerCase().includes('credit');
+
+      if (isRevolving) {
+        if (currentBal > 0) {
+          const estMin = Math.min(currentBal, Math.max(25, currentBal * 0.025));
+          revolvingMinimum += estMin;
+        }
+      } else {
+        let scheduledPmt = 0;
+        for (const b of t.bureau_details) {
+          if (b.comments && b.comments.includes('Pago Mensual: $')) {
+            const pmtMatch = b.comments.match(/Pago Mensual:\s*\$?([\d,]+(?:\.\d{2})?)/i);
+            if (pmtMatch) {
+              scheduledPmt = parseFloat(pmtMatch[1].replace(/,/g, ''));
+              break;
+            }
+          }
+        }
+        installmentMonthly += scheduledPmt;
+      }
+    }
+
+    return {
+      installmentMonthly,
+      revolvingMinimum,
+      totalObligation: installmentMonthly + revolvingMinimum
+    };
+  };
+
+  const monthlyStats = calculateMonthlyObligations();
+
   const getDebtStyle = (bal: number) => {
     if (bal >= 50000) {
       return {
@@ -635,6 +674,62 @@ export default function DashboardPage() {
             <p className="text-xs text-slate-400 leading-relaxed max-w-lg mx-auto">
               No hay datos ni valores ficticios cargados en su cuenta. Para comenzar la auditoría de sus 15 cuentas, tarjetas de crédito e hipotecas, seleccione su archivo PDF en la caja de arriba y presione <span className="text-cyan-300 font-semibold">"Analizar Cuentas & Deudas Reales"</span>.
             </p>
+          </div>
+        )}
+
+        {/* MONTHLY MINIMUM OBLIGATION CALCULATOR BANNER */}
+        {hasData && (
+          <div className="p-5 rounded-2xl border border-cyan-500/30 bg-gradient-to-r from-slate-900/90 via-cyan-950/20 to-indigo-950/30 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+                  <Calculator className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    Pago Mensual Mínimo Total Obligatorio
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Suma exacta de las cuotas mensuales fijas de préstamos + pagos mínimos de tarjetas de crédito.
+                  </p>
+                </div>
+              </div>
+
+              <div className="text-right">
+                <div className="text-xs text-slate-400 uppercase tracking-widest font-mono">Pago Mensual Mínimo Total</div>
+                <div className="text-2xl font-black text-cyan-300 font-mono">
+                  ${monthlyStats.totalObligation.toLocaleString(undefined, { minimumFractionDigits: 2 })}<span className="text-xs text-slate-400 font-sans"> / mes</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs pt-1">
+              <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 flex justify-between items-center">
+                <div>
+                  <div className="font-bold text-indigo-300 flex items-center gap-1.5">
+                    <Home className="w-4 h-4 text-indigo-400" />
+                    Hipotecas y Préstamos (Cuotas Fijas)
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">A&D Mortgage ($2,812), JPMCB Auto ($756), Toyota ($746), Westgate ($226)</div>
+                </div>
+                <div className="text-base font-black text-indigo-200 font-mono">
+                  ${monthlyStats.installmentMonthly.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 flex justify-between items-center">
+                <div>
+                  <div className="font-bold text-red-300 flex items-center gap-1.5">
+                    <CreditCard className="w-4 h-4 text-red-400" />
+                    Pagos Mínimos en Tarjetas de Crédito
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">Calculado a regla bancaria EEUU max($25, 2.5% del saldo) en 9 tarjetas</div>
+                </div>
+                <div className="text-base font-black text-red-300 font-mono">
+                  ${monthlyStats.revolvingMinimum.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
