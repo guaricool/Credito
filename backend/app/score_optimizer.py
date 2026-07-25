@@ -32,52 +32,53 @@ class ScoreOptimizerService:
 
         # 2. Calculate revolving utilization & balances from parsed tradelines
         total_balance = 0.0
+        total_past_due = 0.0
         total_limit = 0.0
         revolving_count = 0
 
-        for t in all_tradelines:
-            for b in t.bureau_details:
-                if b.current_balance and float(b.current_balance) > 0:
-                    total_balance += float(b.current_balance)
-                    revolving_count += 1
-
         if has_uploaded_report:
-            # Aggregate balance across bureaus
+            for t in all_tradelines:
+                for b in t.bureau_details:
+                    if b.current_balance and float(b.current_balance) > 0:
+                        total_balance += float(b.current_balance)
+                        revolving_count += 1
+                    if b.past_due_amount and float(b.past_due_amount) > 0:
+                        total_past_due += float(b.past_due_amount)
+
             if total_balance > 0:
-                total_limit = round(max(total_balance * 1.6, 5000.0), 2)
+                total_limit = round(max(total_balance * 1.5, 3000.0), 2)
             else:
-                total_balance = 1250.0
-                total_limit = 8000.0
+                total_limit = 5000.0
 
             if parsed_scores:
                 base_score = int(sum(parsed_scores) / len(parsed_scores))
             else:
-                base_score = 645
+                base_score = 650
         else:
-            # Default baseline values for unparsed demo profile
-            total_balance = 4250.0
-            total_limit = 10000.0
-            base_score = 635
+            total_balance = 0.0
+            total_past_due = 0.0
+            total_limit = 0.0
+            base_score = 0
 
         utilization_pct = round((total_balance / total_limit) * 100, 1) if total_limit > 0 else 0.0
         target_balance_10_pct = round(total_limit * 0.10, 2)
         recommended_paydown = round(max(0.0, total_balance - target_balance_10_pct), 2)
 
         # 3. Calculate score gain projection
-        potential_gain = 95
-        if utilization_pct < 15.0:
-            potential_gain = max(25, 75 - int(utilization_pct))
+        potential_gain = 85 if has_uploaded_report else 0
+        if has_uploaded_report and utilization_pct < 15.0:
+            potential_gain = max(20, 60 - int(utilization_pct))
 
-        target_score = min(850, base_score + potential_gain)
+        target_score = min(850, base_score + potential_gain) if has_uploaded_report else 0
 
-        # 4. Build Action Roadmap using real values
+        # 4. Build Action Roadmap
         roadmap: List[Dict[str, Any]] = [
             {
                 "step_number": 1,
                 "category": "REVOLVING_UTILIZATION",
                 "title": "Execute Statement Date Balance Paydown (Target < 10% Utilization)",
                 "statute_citation": "15 U.S.C. § 1681g",
-                "description": f"Your current revolving utilization is {utilization_pct}%. Pay down ${recommended_paydown:,.2f} before your credit card statement closing date (3-5 days before due date) so the card issuer reports a balance under 10% to Experian, Equifax, and TransUnion.",
+                "description": f"Your current real revolving balance is ${total_balance:,.2f} ({utilization_pct}% utilization). Pay down ${recommended_paydown:,.2f} before your credit card statement closing date so the card issuer reports a balance under 10% to Experian, Equifax, and TransUnion.",
                 "potential_point_gain": "+25 to +40 Points",
                 "action_button_text": "Calculate Payment Plan",
                 "action_type": "CALCULATE_PAYMENT",
@@ -115,17 +116,18 @@ class ScoreOptimizerService:
         ]
 
         return {
-            "is_real_data": has_uploaded_report,
+            "has_data": has_uploaded_report,
             "current_estimated_score": base_score,
             "target_potential_score": target_score,
             "potential_points_gain": potential_gain,
             "utilization": {
                 "current_balance": total_balance,
+                "total_past_due": total_past_due,
                 "total_credit_limit": total_limit,
                 "utilization_percentage": utilization_pct,
                 "target_balance_10_pct": target_balance_10_pct,
                 "recommended_paydown": recommended_paydown,
-                "status": "HIGH" if utilization_pct > 30 else ("MODERATE" if utilization_pct > 10 else "OPTIMAL"),
+                "status": "HIGH" if utilization_pct > 30 else ("MODERATE" if utilization_pct > 10 else "UNAUDITED"),
             },
             "action_roadmap": roadmap,
         }
