@@ -41,7 +41,11 @@ import {
   Car,
   Info,
   ArrowDown,
+  ArrowUp,
   Calendar,
+  Layers,
+  History,
+  TrendingDown,
 } from 'lucide-react';
 
 interface BureauDetail {
@@ -96,34 +100,6 @@ interface DisputeCampaign {
   letters: DisputeLetter[];
 }
 
-interface DataLeak {
-  id: string;
-  breach_name: string;
-  leak_date?: string;
-  exposed_fields?: string[];
-  compromised_credentials?: string;
-  risk_level: string;
-  created_at: string;
-}
-
-interface DataBroker {
-  id: string;
-  broker_name: string;
-  category?: string;
-  opt_out_url?: string;
-  removal_mechanism: string;
-}
-
-interface OptOutRequest {
-  id: string;
-  broker_id: string;
-  status: 'PENDING' | 'SUBMITTED' | 'VERIFIED_REMOVED' | 'REJECTED' | string;
-  request_date: string;
-  confirmation_token?: string;
-  last_checked: string;
-  broker?: DataBroker;
-}
-
 interface AdvisorRecommendation {
   id: string;
   priority: 'IMMEDIATE_ACTION' | 'HIGH_PRIORITY' | 'RECOMMENDED' | 'PREVENTATIVE' | string;
@@ -166,6 +142,26 @@ interface ScorePlan {
   action_roadmap: OptimizationStep[];
 }
 
+interface ComparisonData {
+  has_comparison: boolean;
+  message?: string;
+  latest_report_date?: string;
+  previous_report_date?: string;
+  latest_total_debt?: number;
+  previous_total_debt?: number;
+  total_debt_delta?: number;
+  account_changes?: Array<{
+    creditor_name: string;
+    account_number_masked: string;
+    account_type?: string;
+    previous_balance: number;
+    current_balance: number;
+    delta: number;
+  }>;
+  paid_off_accounts?: string[];
+  new_accounts?: string[];
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -196,6 +192,9 @@ export default function DashboardPage() {
   // Score Optimizer Plan state
   const [scorePlan, setScorePlan] = useState<ScorePlan | null>(null);
 
+  // Month-over-Month Comparison Data
+  const [comparisonData, setComparisonData] = useState<ComparisonData | null>(null);
+
   // Dispute form states
   const [letterType, setLetterType] = useState<'SECTION_609' | 'DEBT_VALIDATION' | 'MOV'>('SECTION_609');
   const [targetName, setTargetName] = useState('Experian');
@@ -218,11 +217,12 @@ export default function DashboardPage() {
         const userRes = await api.get('/api/v1/auth/me');
         setUser(userRes.data);
 
-        const [violRes, campRes, advisorRes, scoreRes] = await Promise.all([
+        const [violRes, campRes, advisorRes, scoreRes, compRes] = await Promise.all([
           api.get('/api/v1/compliance/violations').catch(() => ({ data: [] })),
           api.get('/api/v1/disputes/campaigns').catch(() => ({ data: [] })),
           api.get('/api/v1/advisor/recommendations').catch(() => ({ data: { recommendations: [], credit_health_index: 0 } })),
           api.get('/api/v1/optimizer/plan').catch(() => ({ data: null })),
+          api.get('/api/v1/reports/comparison').catch(() => ({ data: null })),
         ]);
 
         setViolations(violRes.data || []);
@@ -235,6 +235,10 @@ export default function DashboardPage() {
 
         if (scoreRes.data) {
           setScorePlan(scoreRes.data);
+        }
+
+        if (compRes.data) {
+          setComparisonData(compRes.data);
         }
       } catch (err) {
         console.error('Auth check error:', err);
@@ -314,9 +318,17 @@ export default function DashboardPage() {
       setViolations(auditRes.data || []);
       setUploadProgress('Audit complete!');
 
-      const optRes = await api.get('/api/v1/optimizer/plan');
+      const [optRes, compRes] = await Promise.all([
+        api.get('/api/v1/optimizer/plan'),
+        api.get('/api/v1/reports/comparison').catch(() => ({ data: null })),
+      ]);
+
       if (optRes.data) {
         setScorePlan(optRes.data);
+      }
+
+      if (compRes?.data) {
+        setComparisonData(compRes.data);
       }
 
       accountsSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -509,7 +521,7 @@ export default function DashboardPage() {
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-6 pt-8 space-y-8 flex-1 w-full">
         
-        {/* SECTION 1: Credit Report Uploader */}
+        {/* SECTION 1: Clean Slate Onboarding & Credit Report Uploader */}
         <section className="glass-panel p-6 sm:p-8 rounded-2xl border border-cyan-500/30 space-y-6 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 shadow-2xl relative overflow-hidden">
           <div className="flex items-center justify-between">
             <div>
@@ -521,7 +533,9 @@ export default function DashboardPage() {
                 Subir Reporte de Crédito Tri-Buró (PDF / HTML)
               </h2>
               <p className="text-xs text-slate-400 mt-1 max-w-2xl">
-                Cargue su reporte oficial de Experian, Equifax o TransUnion. El sistema analizará cada tarjeta de crédito, préstamo de auto e hipoteca sin duplicar balances.
+                {!hasData
+                  ? 'Su cuenta está completamente limpia sin datos previos. Suba su reporte de crédito oficial en PDF de Experian, Equifax o TransUnion para iniciar la auditoría estatutaria.'
+                  : 'Cargue su reporte actualizado para recalcular saldos y verificar los progresos de reducción de deuda mes a mes.'}
               </p>
             </div>
           </div>
@@ -595,54 +609,141 @@ export default function DashboardPage() {
           </div>
         </section>
 
+        {/* CLEAN SLATE ONBOARDING VIEW WHEN NO REPORT UPLOADED YET */}
+        {!hasData && (
+          <div className="text-center py-16 px-6 glass-panel rounded-2xl border border-slate-800 space-y-4 max-w-3xl mx-auto">
+            <div className="p-4 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 w-16 h-16 mx-auto flex items-center justify-center">
+              <ShieldCheck className="w-8 h-8" />
+            </div>
+            <h3 className="text-xl font-bold text-white">Sistema Limpio — Listo para su Primer Reporte</h3>
+            <p className="text-xs text-slate-400 leading-relaxed max-w-lg mx-auto">
+              No hay datos ni valores ficticios cargados en su cuenta. Para comenzar la auditoría de sus 15 cuentas, tarjetas de crédito e hipotecas, seleccione su archivo PDF en la caja de arriba y presione <span className="text-cyan-300 font-semibold">"Analizar Cuentas & Deudas Reales"</span>.
+            </p>
+          </div>
+        )}
+
+        {/* MONTH-OVER-MONTH COMPARISON BANNER (SI EXISTEN 2+ REPORTES CARGADOS EN SU CUENTA) */}
+        {hasData && comparisonData?.has_comparison && (
+          <section className="glass-panel p-6 sm:p-8 rounded-2xl border border-cyan-500/30 space-y-6 bg-gradient-to-br from-slate-900/90 via-cyan-950/20 to-slate-950/90 shadow-2xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
+              <div>
+                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-semibold uppercase tracking-wider mb-2">
+                  <History className="w-3.5 h-3.5 text-cyan-400" />
+                  Comparativa de Progreso Mensual
+                </div>
+                <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                  Diferencias Detectadas entre Reportes ({comparisonData.previous_report_date} ➔ {comparisonData.latest_report_date})
+                </h2>
+              </div>
+
+              {/* Delta Tag */}
+              <div className="flex items-center gap-3 bg-slate-950/90 p-3 rounded-xl border border-slate-800">
+                <div className="text-xs text-slate-400">Variación Total Deuda:</div>
+                <div className={`font-mono font-black text-lg flex items-center gap-1 ${
+                  (comparisonData.total_debt_delta || 0) <= 0 ? 'text-emerald-400' : 'text-red-400'
+                }`}>
+                  {(comparisonData.total_debt_delta || 0) <= 0 ? (
+                    <TrendingDown className="w-5 h-5 text-emerald-400" />
+                  ) : (
+                    <ArrowUp className="w-5 h-5 text-red-400" />
+                  )}
+                  ${Math.abs(comparisonData.total_debt_delta || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+              </div>
+            </div>
+
+            {/* Paid off or Changed Accounts List */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+              {comparisonData.paid_off_accounts && comparisonData.paid_off_accounts.length > 0 && (
+                <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 space-y-2">
+                  <div className="font-bold text-emerald-300 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-400" />
+                    Cuentas Saldadas / Liquidadas en $0.00 este mes:
+                  </div>
+                  <ul className="list-disc list-inside text-slate-300 space-y-1 font-mono">
+                    {comparisonData.paid_off_accounts.map((acct, i) => (
+                      <li key={i}>{acct}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {comparisonData.account_changes && comparisonData.account_changes.length > 0 && (
+                <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2 md:col-span-2">
+                  <div className="font-bold text-slate-200 flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4 text-cyan-400" />
+                    Detalle de Cambios de Saldos por Acreedor:
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-2">
+                    {comparisonData.account_changes.map((chg, i) => (
+                      <div key={i} className="p-3 rounded-lg bg-slate-950 border border-slate-800/80 space-y-1 font-mono">
+                        <div className="font-bold text-white truncate">{chg.creditor_name}</div>
+                        <div className="flex justify-between text-[11px]">
+                          <span className="text-slate-400">Anterior: ${chg.previous_balance.toLocaleString()}</span>
+                          <span className="text-cyan-300 font-bold">Actual: ${chg.current_balance.toLocaleString()}</span>
+                        </div>
+                        <div className={`text-right text-[11px] font-bold ${chg.delta < 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {chg.delta < 0 ? 'Reducción: -$' : 'Aumento: +$'}{Math.abs(chg.delta).toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
         {/* Dashboard Overview Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
-              <CreditCard className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="text-2xl font-black text-white">{tradelines.length}</div>
-              <div className="text-xs text-slate-400">Cuentas Auditadas</div>
-            </div>
-          </div>
-
-          <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400">
-              <DollarSign className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="text-xl font-black text-red-400 font-mono">
-                ${revolvingBal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        {hasData && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-center gap-4">
+              <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
+                <CreditCard className="w-6 h-6" />
               </div>
-              <div className="text-[11px] text-slate-400 font-semibold">Deuda Tarjetas de Crédito</div>
-            </div>
-          </div>
-
-          <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-              <Home className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="text-xl font-black text-indigo-300 font-mono">
-                ${installmentBal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              <div>
+                <div className="text-2xl font-black text-white">{tradelines.length}</div>
+                <div className="text-xs text-slate-400">Cuentas Auditadas</div>
               </div>
-              <div className="text-[11px] text-slate-400 font-semibold">Hipotecas y Autos</div>
             </div>
-          </div>
 
-          <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-center gap-4">
-            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
-              <PieChart className="w-6 h-6" />
-            </div>
-            <div>
-              <div className="text-2xl font-black text-emerald-400">
-                {scorePlan?.utilization.utilization_percentage || 0}%
+            <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-center gap-4">
+              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400">
+                <DollarSign className="w-6 h-6" />
               </div>
-              <div className="text-xs text-slate-400">Utilización Revolvente</div>
+              <div>
+                <div className="text-xl font-black text-red-400 font-mono">
+                  ${revolvingBal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[11px] text-slate-400 font-semibold">Deuda Tarjetas de Crédito</div>
+              </div>
+            </div>
+
+            <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-center gap-4">
+              <div className="p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
+                <Home className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="text-xl font-black text-indigo-300 font-mono">
+                  ${installmentBal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <div className="text-[11px] text-slate-400 font-semibold">Hipotecas y Autos</div>
+              </div>
+            </div>
+
+            <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-center gap-4">
+              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+                <PieChart className="w-6 h-6" />
+              </div>
+              <div>
+                <div className="text-2xl font-black text-emerald-400">
+                  {scorePlan?.utilization.utilization_percentage || 0}%
+                </div>
+                <div className="text-xs text-slate-400">Utilización Revolvente</div>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Real Debt Total Banner */}
         {hasData && (
@@ -664,34 +765,28 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* SECTION 2: Sorted Tri-Bureau Accounts & Debts Breakdown Table (De Mayor a Menor & Color Rojo -> Verde) */}
-        <section ref={accountsSectionRef} className="glass-panel p-6 sm:p-8 rounded-2xl border border-slate-800 space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                <CreditCard className="w-6 h-6 text-cyan-400" />
-                Desglose Jerárquico de Cuentas, Plazos y Deudas ({sortedTradelines.length})
-              </h2>
-              <p className="text-xs text-slate-400 mt-1 max-w-2xl">
-                Organizadas de mayor a menor saldo con indicador de <span className="text-cyan-300 font-semibold">Plazo Estructurado (Años / Meses)</span> y <span className="text-emerald-300 font-semibold">Pago Programado Mensual</span>.
-              </p>
-            </div>
-
-            {hasData && (
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300 font-mono">
-                <ArrowDown className="w-4 h-4 text-cyan-400" />
-                <span>Orden: Mayor a Menor Balance</span>
+        {/* SECTION 2: Sorted Tri-Bureau Accounts & Debts Breakdown Table */}
+        {hasData && (
+          <section ref={accountsSectionRef} className="glass-panel p-6 sm:p-8 rounded-2xl border border-slate-800 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <CreditCard className="w-6 h-6 text-cyan-400" />
+                  Desglose Jerárquico de Cuentas, Plazos y Deudas ({sortedTradelines.length})
+                </h2>
+                <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                  Organizadas de mayor a menor saldo con indicador de <span className="text-cyan-300 font-semibold">Plazo Estructurado (Años / Meses)</span> y <span className="text-emerald-300 font-semibold">Pago Programado Mensual</span>.
+                </p>
               </div>
-            )}
-          </div>
 
-          {!hasData || sortedTradelines.length === 0 ? (
-            <div className="text-center py-12 border border-slate-800/80 rounded-xl bg-slate-900/30">
-              <CreditCard className="w-10 h-10 text-slate-600 mx-auto mb-3" />
-              <p className="text-sm font-semibold text-slate-300">Sistema Limpio — No se han cargado reportes aún</p>
-              <p className="text-xs text-slate-500 mt-1">Suba su reporte de crédito arriba para auditar sus tarjetas y préstamos en tiempo real.</p>
+              {hasData && (
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300 font-mono">
+                  <ArrowDown className="w-4 h-4 text-cyan-400" />
+                  <span>Orden: Mayor a Menor Balance</span>
+                </div>
+              )}
             </div>
-          ) : (
+
             <div className="overflow-x-auto border border-slate-800 rounded-xl bg-slate-950/80">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -793,8 +888,8 @@ export default function DashboardPage() {
                 </tbody>
               </table>
             </div>
-          )}
-        </section>
+          </section>
+        )}
 
         {/* SECTION 3: Credit Score Improvement Plan & Annual Report Disclosure Notice */}
         {hasData && scorePlan && (
@@ -1017,167 +1112,169 @@ export default function DashboardPage() {
         )}
 
         {/* SECTION 5: Legal Dispute Generator & Live Markdown Preview */}
-        <section ref={disputeSectionRef} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column: Letter Configuration Form */}
-          <div className="glass-panel p-6 sm:p-8 rounded-2xl border border-slate-800 space-y-6">
-            <div>
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                <FileText className="w-5 h-5 text-indigo-400" />
-                Generador de Cartas de Disputa & Validación
-              </h2>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Genere correspondencia legal estatutaria lista para imprimir y enviar por correo certificado.
-              </p>
-            </div>
-
-            <form onSubmit={handleGenerateDispute} className="space-y-4">
+        {hasData && (
+          <section ref={disputeSectionRef} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Left Column: Letter Configuration Form */}
+            <div className="glass-panel p-6 sm:p-8 rounded-2xl border border-slate-800 space-y-6">
               <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-2">
-                  Tipo de Documento Legal
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setLetterType('SECTION_609')}
-                    className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition-all ${
-                      letterType === 'SECTION_609'
-                        ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white border-cyan-400 shadow-md'
-                        : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Sección 609 (Burós)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLetterType('DEBT_VALIDATION')}
-                    className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition-all ${
-                      letterType === 'DEBT_VALIDATION'
-                        ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white border-cyan-400 shadow-md'
-                        : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Validación de Deuda
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLetterType('MOV')}
-                    className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition-all ${
-                      letterType === 'MOV'
-                        ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white border-cyan-400 shadow-md'
-                        : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    Carta MOV
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 mb-1">
-                  Nombre del Acreedor / Banco / Agencia
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={targetName}
-                  onChange={(e) => setTargetName(e.target.value)}
-                  placeholder="e.g. Experian, Chase Bank, Midland Credit"
-                  className="w-full px-4 py-2.5 rounded-xl text-xs glass-input"
-                />
-              </div>
-
-              {letterType === 'DEBT_VALIDATION' && (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Número de Cuenta</label>
-                    <input
-                      type="text"
-                      value={accountNumber}
-                      onChange={(e) => setAccountNumber(e.target.value)}
-                      placeholder="e.g. 4532****9012"
-                      className="w-full px-3 py-2 rounded-xl text-xs glass-input"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-300 mb-1">Saldo Adeudado ($)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={balance}
-                      onChange={(e) => setBalance(parseFloat(e.target.value) || 0)}
-                      placeholder="0.00"
-                      className="w-full px-3 py-2 rounded-xl text-xs glass-input"
-                    />
-                  </div>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={generating}
-                className="w-full py-3 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-cyan-500 via-indigo-600 to-purple-600 hover:opacity-95 shadow-lg shadow-cyan-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-40"
-              >
-                {generating ? (
-                  <>
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Redactando Carta Legal...</span>
-                  </>
-                ) : (
-                  <>
-                    <FileText className="w-4 h-4" />
-                    <span>Generar Documento Legal de Disputa</span>
-                  </>
-                )}
-              </button>
-            </form>
-          </div>
-
-          {/* Right Column: Live Markdown Preview Window */}
-          <div className="glass-panel p-6 sm:p-8 rounded-2xl border border-slate-800 flex flex-col space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                  <FileCheck2 className="w-5 h-5 text-emerald-400" />
-                  Vista Previa del Documento
-                </h3>
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-indigo-400" />
+                  Generador de Cartas de Disputa & Validación
+                </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Texto listo para copiar o descargar en formato impreso.
+                  Genere correspondencia legal estatutaria lista para imprimir y enviar por correo certificado.
                 </p>
               </div>
 
-              {generatedMarkdown && (
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={handleCopyMarkdown}
-                    className="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white text-xs font-medium transition-colors flex items-center gap-1.5"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>{copySuccess ? '¡Copiado!' : 'Copiar'}</span>
-                  </button>
-                  <button
-                    onClick={handleDownloadMarkdown}
-                    className="px-3 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 text-xs font-semibold transition-colors flex items-center gap-1.5"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span>Descargar</span>
-                  </button>
+              <form onSubmit={handleGenerateDispute} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-2">
+                    Tipo de Documento Legal
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setLetterType('SECTION_609')}
+                      className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition-all ${
+                        letterType === 'SECTION_609'
+                          ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white border-cyan-400 shadow-md'
+                          : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Sección 609 (Burós)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLetterType('DEBT_VALIDATION')}
+                      className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition-all ${
+                        letterType === 'DEBT_VALIDATION'
+                          ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white border-cyan-400 shadow-md'
+                          : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Validación de Deuda
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLetterType('MOV')}
+                      className={`py-2.5 px-3 rounded-xl text-xs font-bold border transition-all ${
+                        letterType === 'MOV'
+                          ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white border-cyan-400 shadow-md'
+                          : 'border-slate-800 bg-slate-900/60 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      Carta MOV
+                    </button>
+                  </div>
                 </div>
-              )}
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    Nombre del Acreedor / Banco / Agencia
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={targetName}
+                    onChange={(e) => setTargetName(e.target.value)}
+                    placeholder="e.g. Experian, Chase Bank, Midland Credit"
+                    className="w-full px-4 py-2.5 rounded-xl text-xs glass-input"
+                  />
+                </div>
+
+                {letterType === 'DEBT_VALIDATION' && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Número de Cuenta</label>
+                      <input
+                        type="text"
+                        value={accountNumber}
+                        onChange={(e) => setAccountNumber(e.target.value)}
+                        placeholder="e.g. 4532****9012"
+                        className="w-full px-3 py-2 rounded-xl text-xs glass-input"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1">Saldo Adeudado ($)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={balance}
+                        onChange={(e) => setBalance(parseFloat(e.target.value) || 0)}
+                        placeholder="0.00"
+                        className="w-full px-3 py-2 rounded-xl text-xs glass-input"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={generating}
+                  className="w-full py-3 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-cyan-500 via-indigo-600 to-purple-600 hover:opacity-95 shadow-lg shadow-cyan-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-40"
+                >
+                  {generating ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Redactando Carta Legal...</span>
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="w-4 h-4" />
+                      <span>Generar Documento Legal de Disputa</span>
+                    </>
+                  )}
+                </button>
+              </form>
             </div>
 
-            {/* Content Container */}
-            <div className="flex-1 min-h-[350px] p-5 rounded-xl bg-slate-950/90 border border-slate-800 font-mono text-xs text-slate-300 overflow-y-auto leading-relaxed whitespace-pre-wrap selection:bg-cyan-500 selection:text-white">
-              {generatedMarkdown ? (
-                generatedMarkdown
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-2 py-16">
-                  <FileText className="w-10 h-10 stroke-[1.5]" />
-                  <p className="text-xs font-medium">Cargue un reporte de crédito o presione "Generar Documento Legal de Disputa"</p>
+            {/* Right Column: Live Markdown Preview Window */}
+            <div className="glass-panel p-6 sm:p-8 rounded-2xl border border-slate-800 flex flex-col space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                    <FileCheck2 className="w-5 h-5 text-emerald-400" />
+                    Vista Previa del Documento
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Texto listo para copiar o descargar en formato impreso.
+                  </p>
                 </div>
-              )}
+
+                {generatedMarkdown && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleCopyMarkdown}
+                      className="px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-900 text-slate-300 hover:text-white text-xs font-medium transition-colors flex items-center gap-1.5"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>{copySuccess ? '¡Copiado!' : 'Copiar'}</span>
+                    </button>
+                    <button
+                      onClick={handleDownloadMarkdown}
+                      className="px-3 py-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 text-xs font-semibold transition-colors flex items-center gap-1.5"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Descargar</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Content Container */}
+              <div className="flex-1 min-h-[350px] p-5 rounded-xl bg-slate-950/90 border border-slate-800 font-mono text-xs text-slate-300 overflow-y-auto leading-relaxed whitespace-pre-wrap selection:bg-cyan-500 selection:text-white">
+                {generatedMarkdown ? (
+                  generatedMarkdown
+                ) : (
+                  <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-2 py-16">
+                    <FileText className="w-10 h-10 stroke-[1.5]" />
+                    <p className="text-xs font-medium">Cargue un reporte de crédito o presione "Generar Documento Legal de Disputa"</p>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        </section>
+          </section>
+        )}
       </main>
     </div>
   );

@@ -101,3 +101,78 @@ async def upload_credit_report(
     full_report = result.scalar_one()
 
     return full_report
+
+@router.get("/comparison")
+async def get_report_comparison(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = (
+        select(CreditReport)
+        .options(
+            selectinload(CreditReport.tradelines)
+            .selectinload(Tradeline.bureau_details)
+        )
+        .where(CreditReport.user_id == current_user.id)
+        .order_by(CreditReport.created_at.desc())
+        .limit(2)
+    )
+    result = await db.execute(stmt)
+    reports = result.scalars().all()
+
+    if len(reports) < 2:
+        return {
+            "has_comparison": False,
+            "message": "Cargue su segundo reporte de crédito para habilitar la comparativa mensual de progresión y saldos."
+        }
+
+    latest = reports[0]
+    previous = reports[1]
+
+    def get_tradeline_max_bal(t: Tradeline) -> float:
+        max_b = 0.0
+        for b in t.bureau_details:
+            if b.current_balance and float(b.current_balance) > max_b:
+                max_b = float(b.current_balance)
+        return max_b
+
+    latest_map = {f"{t.creditor_name.upper()}_{t.account_number_masked}": (t, get_tradeline_max_bal(t)) for t in latest.tradelines}
+    previous_map = {f"{t.creditor_name.upper()}_{t.account_number_masked}": (t, get_tradeline_max_bal(t)) for t in previous.tradelines}
+
+    account_changes = []
+    paid_off_accounts = []
+    new_accounts = []
+
+    for key, (latest_t, latest_bal) in latest_map.items():
+        if key in previous_map:
+            prev_t, prev_bal = previous_map[key]
+            delta = latest_bal - prev_bal
+            if abs(delta) > 0.01:
+                account_changes.append({
+                    "creditor_name": latest_t.creditor_name,
+                    "account_number_masked": latest_t.account_number_masked,
+                    "account_type": latest_t.account_type,
+                    "previous_balance": prev_bal,
+                    "current_balance": latest_bal,
+                    "delta": delta
+                })
+                if prev_bal > 0 and latest_bal == 0:
+                    paid_off_accounts.append(latest_t.creditor_name)
+        else:
+            new_accounts.append(latest_t.creditor_name)
+
+    latest_total = sum(bal for _, bal in latest_map.values())
+    previous_total = sum(bal for _, bal in previous_map.values())
+    total_delta = latest_total - previous_total
+
+    return {
+        "has_comparison": True,
+        "latest_report_date": latest.created_at.strftime("%Y-%m-%d"),
+        "previous_report_date": previous.created_at.strftime("%Y-%m-%d"),
+        "latest_total_debt": latest_total,
+        "previous_total_debt": previous_total,
+        "total_debt_delta": total_delta,
+        "account_changes": account_changes,
+        "paid_off_accounts": paid_off_accounts,
+        "new_accounts": new_accounts
+    }
