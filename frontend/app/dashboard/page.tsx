@@ -46,6 +46,7 @@ import {
   Layers,
   History,
   TrendingDown,
+  RotateCcw,
 } from 'lucide-react';
 
 interface BureauDetail {
@@ -205,56 +206,73 @@ export default function DashboardPage() {
   const [generatedMarkdown, setGeneratedMarkdown] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
 
+  const fetchInitialData = async () => {
+    try {
+      const userRes = await api.get('/api/v1/auth/me');
+      setUser(userRes.data);
+
+      const [violRes, campRes, advisorRes, scoreRes, compRes] = await Promise.all([
+        api.get('/api/v1/compliance/violations').catch(() => ({ data: [] })),
+        api.get('/api/v1/disputes/campaigns').catch(() => ({ data: [] })),
+        api.get('/api/v1/advisor/recommendations').catch(() => ({ data: { recommendations: [], credit_health_index: 0 } })),
+        api.get('/api/v1/optimizer/plan').catch(() => ({ data: null })),
+        api.get('/api/v1/reports/comparison').catch(() => ({ data: null })),
+      ]);
+
+      setViolations(violRes.data || []);
+      setCampaigns(campRes.data || []);
+
+      if (advisorRes.data?.recommendations) {
+        setRecommendations(advisorRes.data.recommendations);
+        setHealthIndex(advisorRes.data.credit_health_index || 0);
+      }
+
+      if (scoreRes.data) {
+        setScorePlan(scoreRes.data);
+      }
+
+      if (compRes.data) {
+        setComparisonData(compRes.data);
+      }
+    } catch (err) {
+      console.error('Auth check error:', err);
+      localStorage.removeItem('token');
+      router.push('/login');
+    } finally {
+      setLoadingUser(false);
+    }
+  };
+
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) {
       router.push('/login');
       return;
     }
-
-    const fetchInitialData = async () => {
-      try {
-        const userRes = await api.get('/api/v1/auth/me');
-        setUser(userRes.data);
-
-        const [violRes, campRes, advisorRes, scoreRes, compRes] = await Promise.all([
-          api.get('/api/v1/compliance/violations').catch(() => ({ data: [] })),
-          api.get('/api/v1/disputes/campaigns').catch(() => ({ data: [] })),
-          api.get('/api/v1/advisor/recommendations').catch(() => ({ data: { recommendations: [], credit_health_index: 0 } })),
-          api.get('/api/v1/optimizer/plan').catch(() => ({ data: null })),
-          api.get('/api/v1/reports/comparison').catch(() => ({ data: null })),
-        ]);
-
-        setViolations(violRes.data || []);
-        setCampaigns(campRes.data || []);
-
-        if (advisorRes.data?.recommendations) {
-          setRecommendations(advisorRes.data.recommendations);
-          setHealthIndex(advisorRes.data.credit_health_index || 0);
-        }
-
-        if (scoreRes.data) {
-          setScorePlan(scoreRes.data);
-        }
-
-        if (compRes.data) {
-          setComparisonData(compRes.data);
-        }
-      } catch (err) {
-        console.error('Auth check error:', err);
-        localStorage.removeItem('token');
-        router.push('/login');
-      } finally {
-        setLoadingUser(false);
-      }
-    };
-
     fetchInitialData();
   }, [router]);
 
   const handleSignOut = () => {
     localStorage.removeItem('token');
     router.push('/login');
+  };
+
+  const handleResetData = async () => {
+    if (!confirm('¿Está seguro de que desea limpiar todos los datos de su cuenta para comenzar de cero?')) return;
+    try {
+      await api.post('/api/v1/reports/reset');
+      setCreditReport(null);
+      setTradelines([]);
+      setViolations([]);
+      setCampaigns([]);
+      setScorePlan(null);
+      setComparisonData(null);
+      setSelectedFile(null);
+      alert('Su cuenta se ha reiniciado correctamente a 0.');
+    } catch (err) {
+      console.error('Reset error:', err);
+      alert('Error al reiniciar los datos.');
+    }
   };
 
   const handleDrag = (e: React.DragEvent) => {
@@ -318,18 +336,7 @@ export default function DashboardPage() {
       setViolations(auditRes.data || []);
       setUploadProgress('Audit complete!');
 
-      const [optRes, compRes] = await Promise.all([
-        api.get('/api/v1/optimizer/plan'),
-        api.get('/api/v1/reports/comparison').catch(() => ({ data: null })),
-      ]);
-
-      if (optRes.data) {
-        setScorePlan(optRes.data);
-      }
-
-      if (compRes?.data) {
-        setComparisonData(compRes.data);
-      }
+      await fetchInitialData();
 
       accountsSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
     } catch (err: any) {
@@ -424,7 +431,7 @@ export default function DashboardPage() {
     );
   }
 
-  const hasData = scorePlan?.has_data || tradelines.length > 0;
+  const hasData = (scorePlan?.has_data || tradelines.length > 0) && tradelines.length > 0;
   const revolvingBal = scorePlan?.utilization.revolving_balance || scorePlan?.utilization.current_balance || 0;
   const installmentBal = scorePlan?.utilization.installment_balance || 0;
   const totalRealDebt = scorePlan?.utilization.total_real_debt || (revolvingBal + installmentBal);
@@ -494,10 +501,19 @@ export default function DashboardPage() {
             </Link>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleResetData}
+              className="px-3 py-1.5 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/20 text-xs font-bold transition-all flex items-center gap-1.5"
+              title="Reiniciar datos de la cuenta a cero"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>Limpiar Datos (Comenzar Fresco)</span>
+            </button>
+
             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-800 text-slate-300 text-xs font-mono">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-              100% Private Mode (Zero External Dispatch)
+              100% Private Mode
             </div>
 
             <div className="text-right text-xs">
@@ -534,7 +550,7 @@ export default function DashboardPage() {
               </h2>
               <p className="text-xs text-slate-400 mt-1 max-w-2xl">
                 {!hasData
-                  ? 'Su cuenta está completamente limpia sin datos previos. Suba su reporte de crédito oficial en PDF de Experian, Equifax o TransUnion para iniciar la auditoría estatutaria.'
+                  ? 'Su cuenta está completamente limpia sin datos previas. Suba su reporte de crédito oficial en PDF de Experian, Equifax o TransUnion para iniciar la auditoría estatutaria.'
                   : 'Cargue su reporte actualizado para recalcular saldos y verificar los progresos de reducción de deuda mes a mes.'}
               </p>
             </div>
@@ -623,7 +639,7 @@ export default function DashboardPage() {
         )}
 
         {/* MONTH-OVER-MONTH COMPARISON BANNER (SI EXISTEN 2+ REPORTES CARGADOS EN SU CUENTA) */}
-        {hasData && comparisonData?.has_comparison && (
+        {hasData && comparisonData?.has_comparison && (comparisonData.account_changes?.length || 0) > 0 && (
           <section className="glass-panel p-6 sm:p-8 rounded-2xl border border-cyan-500/30 space-y-6 bg-gradient-to-br from-slate-900/90 via-cyan-950/20 to-slate-950/90 shadow-2xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
               <div>
@@ -898,7 +914,7 @@ export default function DashboardPage() {
               <div>
                 <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs font-semibold uppercase tracking-wider mb-2">
                   <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
-                  Plan de Optimización de Puntaje
+                  Coaching de Crédito & Plan de Optimización
                 </div>
                 <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
                   Plan Real de Reducción de Saldos & Estrategia de Crédito

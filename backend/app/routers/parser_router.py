@@ -3,11 +3,11 @@ from decimal import Decimal
 from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 
 from app.database import get_db
-from app.models import User, CreditReport, Tradeline, BureauTradelineDetail
+from app.models import User, CreditReport, Tradeline, BureauTradelineDetail, DisputeCampaign
 from app.schemas import CreditReportResponse
 from app.auth import get_current_user
 from app.parser import CreditReportParser
@@ -101,6 +101,24 @@ async def upload_credit_report(
     full_report = result.scalar_one()
 
     return full_report
+
+@router.post("/reset")
+async def reset_user_credit_data(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    stmt = select(CreditReport).where(CreditReport.user_id == current_user.id)
+    reports = (await db.execute(stmt)).scalars().all()
+    for r in reports:
+        await db.delete(r)
+
+    stmt_c = select(DisputeCampaign).where(DisputeCampaign.user_id == current_user.id)
+    campaigns = (await db.execute(stmt_c)).scalars().all()
+    for c in campaigns:
+        await db.delete(c)
+
+    await db.commit()
+    return {"status": "success", "message": "Todos los datos de reportes e historial han sido reiniciados a cero."}
 
 @router.get("/comparison")
 async def get_report_comparison(
