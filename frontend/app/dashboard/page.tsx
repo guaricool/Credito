@@ -31,6 +31,9 @@ import {
   CreditCard,
   Target,
   ChevronRight,
+  X,
+  Mail,
+  CheckSquare,
 } from 'lucide-react';
 
 interface BureauDetail {
@@ -149,6 +152,17 @@ interface ScorePlan {
   action_roadmap: OptimizationStep[];
 }
 
+interface NoticePreview {
+  request_id: string;
+  broker_name: string;
+  target_email: string;
+  confirmation_ref: string;
+  status: string;
+  subject: string;
+  body_text: string;
+  mailto_link: string;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -178,7 +192,6 @@ export default function DashboardPage() {
 
   // Score Optimizer Plan state
   const [scorePlan, setScorePlan] = useState<ScorePlan | null>(null);
-  const [loadingScorePlan, setLoadingScorePlan] = useState(false);
 
   // Privacy & Leak Agent states
   const [privacyScore, setPrivacyScore] = useState<number>(85);
@@ -186,6 +199,13 @@ export default function DashboardPage() {
   const [brokerRequests, setBrokerRequests] = useState<OptOutRequest[]>([]);
   const [scanningPrivacy, setScanningPrivacy] = useState(false);
   const [triggeringOptOut, setTriggeringOptOut] = useState(false);
+
+  // CCPA Legal Notice Inspector Modal states
+  const [showNoticeModal, setShowNoticeModal] = useState(false);
+  const [noticePreviews, setNoticePreviews] = useState<NoticePreview[]>([]);
+  const [selectedPreviewIndex, setSelectedPreviewIndex] = useState(0);
+  const [authorizedConsent, setAuthorizedConsent] = useState(false);
+  const [loadingPreviews, setLoadingPreviews] = useState(false);
 
   // FCRA 605B Block Affidavit states
   const [blockBureau, setBlockBureau] = useState('Experian');
@@ -336,7 +356,7 @@ export default function DashboardPage() {
       privacySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
     } else if (rec.action_type === 'CCPA_OPT_OUT') {
       privacySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-      handleTriggerOptOut();
+      handleOpenNoticeInspector();
     } else if (rec.action_type === 'DEBT_VALIDATION') {
       setLetterType('DEBT_VALIDATION');
       disputeSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -415,13 +435,35 @@ export default function DashboardPage() {
     }
   };
 
-  // Trigger Data Broker Opt-Out Deletion
-  const handleTriggerOptOut = async () => {
+  // Open Legal Notice Inspector Modal & Fetch Previews
+  const handleOpenNoticeInspector = async () => {
+    setLoadingPreviews(true);
+    try {
+      const previewRes = await api.get('/api/v1/privacy/opt-out/previews');
+      setNoticePreviews(previewRes.data || []);
+      setSelectedPreviewIndex(0);
+      setShowNoticeModal(true);
+    } catch (err) {
+      console.error('Error fetching opt-out previews:', err);
+      alert('Could not generate notice previews.');
+    } finally {
+      setLoadingPreviews(false);
+    }
+  };
+
+  // Confirm and Execute Opt-Out Dispatch via Authorized Agent
+  const handleConfirmOptOutDispatch = async () => {
+    if (!authorizedConsent) {
+      alert('Debes confirmar y aceptar la casilla de autorización estatutaria.');
+      return;
+    }
+
     setTriggeringOptOut(true);
     try {
       const optRes = await api.post('/api/v1/privacy/opt-out', {});
       setBrokerRequests(optRes.data || []);
       setPrivacyScore((prev) => Math.min(100, prev + 10));
+      setShowNoticeModal(false);
       handleRefreshAdvisor();
     } catch (err) {
       console.error('Opt-out trigger error:', err);
@@ -948,19 +990,19 @@ export default function DashboardPage() {
               </button>
 
               <button
-                onClick={handleTriggerOptOut}
-                disabled={triggeringOptOut}
+                onClick={handleOpenNoticeInspector}
+                disabled={loadingPreviews || triggeringOptOut}
                 className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-500 to-purple-600 hover:opacity-95 shadow-md shadow-indigo-500/20 transition-all flex items-center gap-2 disabled:opacity-40"
               >
-                {triggeringOptOut ? (
+                {loadingPreviews ? (
                   <>
                     <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Executing Opt-Outs...</span>
+                    <span>Loading Notices...</span>
                   </>
                 ) : (
                   <>
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Trigger CCPA Opt-Out Deletion</span>
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Inspect Notices & Authorize Opt-Out</span>
                   </>
                 )}
               </button>
@@ -1062,7 +1104,7 @@ export default function DashboardPage() {
                   {brokerRequests.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-4 px-4 text-center text-slate-500 text-xs italic">
-                        Click "Trigger CCPA Opt-Out Deletion" above to generate removal requests.
+                        Click "Inspect Notices & Authorize Opt-Out" above to review and dispatch removal requests.
                       </td>
                     </tr>
                   ) : (
@@ -1579,6 +1621,144 @@ export default function DashboardPage() {
           </div>
         </section>
       </main>
+
+      {/* CCPA LEGAL NOTICE INSPECTOR & AUTHORIZATION MODAL */}
+      {showNoticeModal && noticePreviews.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#0b1021] border border-indigo-500/40 rounded-2xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            {/* Modal Header */}
+            <div className="p-5 border-b border-slate-800 flex items-center justify-between bg-slate-950/80">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-indigo-500/20 text-indigo-400 border border-indigo-500/30">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-white text-base">
+                    CCPA / CPRA Statutory Legal Notice Inspector & Consent
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Inspect the exact statutory notice drafted for each broker before authorizing dispatch.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowNoticeModal(false)}
+                className="p-1.5 rounded-lg border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Main Body */}
+            <div className="flex-1 flex flex-col md:flex-row overflow-hidden divide-y md:divide-y-0 md:divide-x divide-slate-800">
+              {/* Left Broker Tabs List */}
+              <div className="w-full md:w-64 p-3 space-y-2 bg-slate-950/60 overflow-y-auto max-h-48 md:max-h-none">
+                <div className="text-[10px] font-mono uppercase text-slate-400 px-2 py-1 tracking-wider">
+                  Target Data Brokers ({noticePreviews.length})
+                </div>
+                {noticePreviews.map((preview, idx) => (
+                  <button
+                    key={preview.request_id}
+                    onClick={() => setSelectedPreviewIndex(idx)}
+                    className={`w-full text-left p-3 rounded-xl border text-xs transition-all flex flex-col gap-1 ${
+                      selectedPreviewIndex === idx
+                        ? 'bg-indigo-600/20 border-indigo-500/60 text-white font-bold'
+                        : 'border-slate-800/80 text-slate-400 hover:bg-slate-900/60 hover:text-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="truncate">{preview.broker_name}</span>
+                      <span className="text-[9px] font-mono text-cyan-400">{preview.confirmation_ref.slice(0, 8)}</span>
+                    </div>
+                    <div className="text-[10px] font-mono text-slate-500 truncate">{preview.target_email}</div>
+                  </button>
+                ))}
+              </div>
+
+              {/* Right Notice Document Viewer */}
+              <div className="flex-1 p-5 flex flex-col space-y-3 bg-slate-950/90 overflow-y-auto">
+                {noticePreviews[selectedPreviewIndex] && (
+                  <>
+                    <div className="space-y-2 border-b border-slate-800 pb-3">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400 font-mono">Recipient Email:</span>
+                        <span className="font-mono font-bold text-cyan-300">
+                          {noticePreviews[selectedPreviewIndex].target_email}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-400 font-mono">Subject:</span>
+                        <span className="font-mono font-bold text-amber-300">
+                          {noticePreviews[selectedPreviewIndex].subject}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex-1 p-4 rounded-xl bg-slate-900/90 border border-slate-800 font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap overflow-y-auto">
+                      {noticePreviews[selectedPreviewIndex].body_text}
+                    </div>
+
+                    <div className="flex justify-end">
+                      <a
+                        href={noticePreviews[selectedPreviewIndex].mailto_link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-4 py-2 rounded-xl text-xs font-bold text-indigo-300 border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 transition-all flex items-center gap-1.5"
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>Send via Personal Email Client (Mailto)</span>
+                      </a>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Action Footer */}
+            <div className="p-4 border-t border-slate-800 bg-slate-950 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={authorizedConsent}
+                  onChange={(e) => setAuthorizedConsent(e.target.checked)}
+                  className="rounded border-slate-700 bg-slate-900 text-indigo-500 focus:ring-indigo-500"
+                />
+                <span>
+                  Confirm I have read these statutory notices & authorize designated Agent dispatch under <strong className="text-white">Cal. Civ. Code § 1798.135</strong>.
+                </span>
+              </label>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setShowNoticeModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  onClick={handleConfirmOptOutDispatch}
+                  disabled={!authorizedConsent || triggeringOptOut}
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-500 via-purple-600 to-indigo-600 hover:opacity-95 shadow-lg shadow-indigo-500/20 transition-all flex items-center gap-2 disabled:opacity-40"
+                >
+                  {triggeringOptOut ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Dispatching Requests...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckSquare className="w-3.5 h-3.5" />
+                      <span>Authorize & Dispatch Opt-Out Requests</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

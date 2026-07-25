@@ -76,6 +76,14 @@ async def trigger_data_broker_opt_out(
     res = await db.execute(stmt)
     return list(res.scalars().all())
 
+@router.get("/opt-out/previews", response_model=List[Dict[str, Any]])
+async def get_opt_out_notice_previews(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generates statutory legal email notice previews for CCPA/CPRA data broker deletion requests."""
+    return await LeakAgentService.get_opt_out_previews(db, current_user)
+
 @router.post("/fcra-605b", response_model=Dict[str, str])
 async def generate_fcra_605b_block(
     payload: FCRA605BBlockRequest,

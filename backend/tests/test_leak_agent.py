@@ -109,3 +109,12 @@ async def test_privacy_leak_flow(client):
     assert "15 U.S.C. § 1681c-2" in block_data["citation"]
     assert "DEMAND FOR STATUTORY 4-DAY BLOCK" in block_data["content_markdown"]
     assert "MIDLAND CREDIT MANAGEMENT #998877" in block_data["content_markdown"]
+
+    # 6. Test GET /api/v1/privacy/opt-out/previews
+    preview_res = await client.get("/api/v1/privacy/opt-out/previews", headers=headers)
+    assert preview_res.status_code == 200
+    previews = preview_res.json()
+    assert len(previews) >= 1
+    assert "target_email" in previews[0]
+    assert "subject" in previews[0]
+    assert "Cal. Civ. Code § 1798.105" in previews[0]["body_text"]

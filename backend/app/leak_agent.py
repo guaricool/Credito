@@ -3,6 +3,7 @@ from datetime import datetime, date
 from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from app.models import User, DataLeak, DataBroker, OptOutRequest
 
 # Known US Data Brokers database catalog
@@ -188,6 +189,73 @@ class LeakAgentService:
         stmt_all = select(OptOutRequest).where(OptOutRequest.user_id == user.id)
         res_all = await db.execute(stmt_all)
         return list(res_all.scalars().all())
+
+    @staticmethod
+    async def get_opt_out_previews(db: AsyncSession, user: User) -> List[Dict[str, Any]]:
+        """Generates statutory legal email notice previews for CCPA/CPRA data broker deletion requests."""
+        await LeakAgentService.ensure_data_brokers(db)
+
+        stmt = select(OptOutRequest).where(OptOutRequest.user_id == user.id).options(selectinload(OptOutRequest.broker))
+        res = await db.execute(stmt)
+        requests = list(res.scalars().all())
+
+        previews = []
+        for req in requests:
+            b_name = req.broker.broker_name if req.broker else "US Data Broker"
+            ref_id = req.confirmation_token or f"CCPA-{uuid.uuid4().hex[:8].upper()}"
+
+            email_map = {
+                "BeenVerified Data Index": "privacy@beenverified.com",
+                "Intelius Inc.": "privacy@intelius.com",
+                "Radaris Public Records": "privacy@radaris.com",
+                "LexisNexis Risk Solutions": "privacy@lexisnexis.com",
+                "Spokeo Data Systems": "privacy@spokeo.com",
+                "Whitepages Premium": "optout@whitepages.com",
+            }
+            target_email = email_map.get(b_name, f"privacy@{b_name.lower().replace(' ', '')}.com")
+
+            subject = f"STATUTORY CCPA / CPRA DATA DELETION NOTICE - {user.first_name} {user.last_name} (REF: {ref_id})"
+
+            body = (
+                f"FORMAL STATUTORY NOTICE OF CONSUMER DATA DELETION & OPT-OUT\n"
+                f"Pursuant to the California Consumer Privacy Act (CCPA), Cal. Civ. Code § 1798.105, "
+                f"and the California Privacy Rights Act (CPRA), Cal. Civ. Code § 1798.135.\n\n"
+                f"DATE: {date.today().isoformat()}\n"
+                f"TO: {b_name} Privacy Compliance Department ({target_email})\n"
+                f"FROM CONSUMER: {user.first_name} {user.last_name}\n"
+                f"CONSUMER EMAIL: {user.email}\n"
+                f"CONSUMER ADDRESS: {user.current_address}, {user.city}, {user.state} {user.zip_code}\n"
+                f"STATUTORY REF CODE: {ref_id}\n\n"
+                f"DEMAND FOR DELETION:\n"
+                f"I hereby exercise my statutory right under Cal. Civ. Code § 1798.105 to demand the permanent "
+                f"deletion of all personal information, consumer profiles, address histories, phone numbers, "
+                f"and public record indexing associated with my identity in your databases and affiliated networks.\n\n"
+                f"AUTHORIZED AGENT DESIGNATION:\n"
+                f"Notice is hereby provided that US Credit Law & Privacy Platform is acting as my designated Authorized Agent "
+                f"pursuant to Cal. Civ. Code § 1798.135 and 11 CCR § 7063. Please direct all statutory confirmation of deletion "
+                f"to the consumer email address provided above ({user.email}).\n\n"
+                f"STATUTORY RESPONSE DEADLINE:\n"
+                f"Under California Civil Code § 1798.130(a)(2), you MUST confirm receipt within 10 business days and "
+                f"complete the permanent deletion within 45 calendar days of receipt of this notice.\n\n"
+                f"Sincerely,\n"
+                f"{user.first_name} {user.last_name}\n"
+                f"Consumer & Authorized Agent Designation"
+            )
+
+            mailto_link = f"mailto:{target_email}?subject={subject.replace(' ', '%20')}&body={body.replace(' ', '%20').replace('\n', '%0A')}"
+
+            previews.append({
+                "request_id": str(req.id),
+                "broker_name": b_name,
+                "target_email": target_email,
+                "confirmation_ref": ref_id,
+                "status": req.status,
+                "subject": subject,
+                "body_text": body,
+                "mailto_link": mailto_link,
+            })
+
+        return previews
 
     @staticmethod
     def generate_fcra_605b_blocking_affidavit(
