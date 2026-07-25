@@ -40,6 +40,7 @@ import {
   Home,
   Car,
   Info,
+  ArrowDown,
 } from 'lucide-react';
 
 interface BureauDetail {
@@ -415,6 +416,55 @@ export default function DashboardPage() {
   const installmentBal = scorePlan?.utilization.installment_balance || 0;
   const totalRealDebt = scorePlan?.utilization.total_real_debt || (revolvingBal + installmentBal);
 
+  // Helper to extract max balance for sorting & coloring
+  const getMaxBalance = (t: Tradeline): number => {
+    let maxB = 0;
+    for (const b of t.bureau_details) {
+      if (b.current_balance && Number(b.current_balance) > maxB) {
+        maxB = Number(b.current_balance);
+      }
+    }
+    return maxB;
+  };
+
+  // Sort tradelines from HIGHEST balance to LOWEST balance (De mayor a menor)
+  const sortedTradelines = [...tradelines].sort((a, b) => getMaxBalance(b) - getMaxBalance(a));
+
+  // Visual debt color gradient helper (Rojo -> Naranja -> Amarillo -> Cían -> Verde)
+  const getDebtStyle = (bal: number) => {
+    if (bal >= 50000) {
+      return {
+        textClass: 'text-red-400 font-black font-mono',
+        rowClass: 'bg-red-950/20 hover:bg-red-900/30 border-l-4 border-l-red-500',
+        badge: <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/30 text-[10px] font-mono font-bold">DEUDA CRÍTICA</span>
+      };
+    } else if (bal >= 10000) {
+      return {
+        textClass: 'text-orange-400 font-extrabold font-mono',
+        rowClass: 'bg-orange-950/10 hover:bg-orange-900/20 border-l-4 border-l-orange-500',
+        badge: <span className="px-2 py-0.5 rounded bg-orange-500/10 text-orange-400 border border-orange-500/30 text-[10px] font-mono font-bold">DEUDA ALTA</span>
+      };
+    } else if (bal >= 2000) {
+      return {
+        textClass: 'text-amber-400 font-bold font-mono',
+        rowClass: 'hover:bg-slate-900/50 border-l-4 border-l-amber-500',
+        badge: <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 text-[10px] font-mono font-bold">DEUDA MODERADA</span>
+      };
+    } else if (bal > 0) {
+      return {
+        textClass: 'text-cyan-300 font-bold font-mono',
+        rowClass: 'hover:bg-slate-900/50 border-l-4 border-l-cyan-500',
+        badge: <span className="px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/30 text-[10px] font-mono font-bold">DEUDA MENOR</span>
+      };
+    } else {
+      return {
+        textClass: 'text-emerald-400 font-bold font-mono',
+        rowClass: 'bg-emerald-950/10 hover:bg-emerald-900/20 border-l-4 border-l-emerald-500',
+        badge: <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 text-[10px] font-mono font-bold">SIN DEUDA ($0.00)</span>
+      };
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#050811] text-slate-100 flex flex-col pb-16 relative">
       {/* Background glow */}
@@ -616,21 +666,28 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* SECTION 2: Complete Tri-Bureau Accounts & Debts Breakdown Table */}
+        {/* SECTION 2: Sorted Tri-Bureau Accounts & Debts Breakdown Table (De Mayor a Menor & Color Rojo -> Verde) */}
         <section ref={accountsSectionRef} className="glass-panel p-6 sm:p-8 rounded-2xl border border-slate-800 space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-bold text-white flex items-center gap-2">
                 <CreditCard className="w-6 h-6 text-cyan-400" />
-                Desglose Detallado de Cuentas, Tarjetas de Crédito y Deudas ({tradelines.length})
+                Desglose Jerárquico de Cuentas y Deudas ({sortedTradelines.length})
               </h2>
               <p className="text-xs text-slate-400 mt-1 max-w-2xl">
-                Listado completo de acreedores, saldo actual (cuánto debe), límite disponible y estado ante Experian, Equifax y TransUnion.
+                Organizadas estrictamente <span className="text-cyan-300 font-semibold">de mayor a menor monto adeudado</span> con escala de color visual (<span className="text-red-400 font-bold">Rojo</span> para deudas elevadas hasta <span className="text-emerald-400 font-bold">Verde</span> para cuentas sin saldo).
               </p>
             </div>
+
+            {hasData && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300 font-mono">
+                <ArrowDown className="w-4 h-4 text-cyan-400" />
+                <span>Orden: Mayor a Menor Balance</span>
+              </div>
+            )}
           </div>
 
-          {!hasData || tradelines.length === 0 ? (
+          {!hasData || sortedTradelines.length === 0 ? (
             <div className="text-center py-12 border border-slate-800/80 rounded-xl bg-slate-900/30">
               <CreditCard className="w-10 h-10 text-slate-600 mx-auto mb-3" />
               <p className="text-sm font-semibold text-slate-300">Sistema Limpio — No se han cargado reportes aún</p>
@@ -644,6 +701,7 @@ export default function DashboardPage() {
                     <th className="py-3 px-4">Acreedor / Entidad</th>
                     <th className="py-3 px-4">Tipo de Cuenta</th>
                     <th className="py-3 px-4">N° Cuenta</th>
+                    <th className="py-3 px-4">Prioridad / Nivel</th>
                     <th className="py-3 px-4">Saldo Actual (Debe)</th>
                     <th className="py-3 px-4">Monto en Mora</th>
                     <th className="py-3 px-4">Experian</th>
@@ -653,24 +711,23 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 text-xs">
-                  {tradelines.map((t) => {
+                  {sortedTradelines.map((t) => {
                     const expDetail = t.bureau_details.find((b) => b.bureau === 'Experian');
                     const eqDetail = t.bureau_details.find((b) => b.bureau === 'Equifax');
                     const tuDetail = t.bureau_details.find((b) => b.bureau === 'TransUnion');
 
-                    let currentBal = 0;
+                    const currentBal = getMaxBalance(t);
                     let pastDue = 0;
                     for (const b of t.bureau_details) {
-                      if (b.current_balance && Number(b.current_balance) > currentBal) {
-                        currentBal = Number(b.current_balance);
-                      }
                       if (b.past_due_amount && Number(b.past_due_amount) > pastDue) {
                         pastDue = Number(b.past_due_amount);
                       }
                     }
 
+                    const style = getDebtStyle(currentBal);
+
                     return (
-                      <tr key={t.id} className="hover:bg-slate-900/50 transition-colors">
+                      <tr key={t.id} className={`transition-colors ${style.rowClass}`}>
                         <td className="py-3.5 px-4 font-bold text-slate-200">
                           {t.creditor_name}
                         </td>
@@ -682,7 +739,10 @@ export default function DashboardPage() {
                         <td className="py-3.5 px-4 font-mono text-cyan-300 text-[11px]">
                           {t.account_number_masked}
                         </td>
-                        <td className="py-3.5 px-4 font-mono font-extrabold text-red-400">
+                        <td className="py-3.5 px-4">
+                          {style.badge}
+                        </td>
+                        <td className={`py-3.5 px-4 ${style.textClass}`}>
                           ${currentBal.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                         </td>
                         <td className="py-3.5 px-4 font-mono font-bold text-amber-400">
@@ -740,7 +800,7 @@ export default function DashboardPage() {
                 </h2>
               </div>
 
-              {/* Score Display (Handling PDF Score vs Annual Disclosure Notice) */}
+              {/* Score Display */}
               <div className="flex items-center gap-3 bg-slate-950/90 p-3.5 rounded-xl border border-emerald-500/40">
                 {scorePlan.current_estimated_score ? (
                   <>
