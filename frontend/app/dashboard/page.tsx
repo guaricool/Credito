@@ -275,7 +275,7 @@ export default function DashboardPage() {
         console.error('Auth check error:', err);
         localStorage.removeItem('token');
         router.push('/login');
-      } flexally {
+      } finally {
         setLoadingUser(false);
       }
     };
