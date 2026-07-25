@@ -24,7 +24,9 @@ import {
   ShieldX,
   Lock,
   Building2,
-  Layers,
+  ArrowRight,
+  Compass,
+  Zap,
 } from 'lucide-react';
 
 interface BureauDetail {
@@ -107,9 +109,21 @@ interface OptOutRequest {
   broker?: DataBroker;
 }
 
+interface AdvisorRecommendation {
+  id: string;
+  priority: 'IMMEDIATE_ACTION' | 'HIGH_PRIORITY' | 'RECOMMENDED' | 'PREVENTATIVE' | string;
+  title: string;
+  statute_citation: string;
+  action_type: 'FCRA_605B_BLOCK' | 'SECTION_609_DISPUTE' | 'DEBT_VALIDATION' | 'CCPA_OPT_OUT' | string;
+  description: string;
+  expected_impact: string;
+}
+
 export default function DashboardPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const disputeSectionRef = useRef<HTMLDivElement>(null);
+  const privacySectionRef = useRef<HTMLDivElement>(null);
 
   const [user, setUser] = useState<any>(null);
   const [loadingUser, setLoadingUser] = useState(true);
@@ -125,6 +139,11 @@ export default function DashboardPage() {
   const [violations, setViolations] = useState<Violation[]>([]);
   const [campaigns, setCampaigns] = useState<DisputeCampaign[]>([]);
   const [selectedViolationIds, setSelectedViolationIds] = useState<string[]>([]);
+
+  // AI Advisor states
+  const [recommendations, setRecommendations] = useState<AdvisorRecommendation[]>([]);
+  const [healthIndex, setHealthIndex] = useState<number>(85);
+  const [loadingAdvisor, setLoadingAdvisor] = useState(false);
 
   // Privacy & Leak Agent states
   const [privacyScore, setPrivacyScore] = useState<number>(85);
@@ -159,7 +178,7 @@ export default function DashboardPage() {
     seconds: 45,
   });
 
-  // Check auth & fetch user profile + privacy leaks
+  // Check auth & fetch user profile + privacy leaks + AI Advisor recommendations
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) {
@@ -172,13 +191,14 @@ export default function DashboardPage() {
         const userRes = await api.get('/api/v1/auth/me');
         setUser(userRes.data);
 
-        // Fetch violations, campaigns, leaks, and broker status
-        const [violRes, campRes, scanRes, leaksRes, brokersRes] = await Promise.all([
+        // Fetch violations, campaigns, leaks, brokers, and AI advisor recommendations
+        const [violRes, campRes, scanRes, leaksRes, brokersRes, advisorRes] = await Promise.all([
           api.get('/api/v1/compliance/violations').catch(() => ({ data: [] })),
           api.get('/api/v1/disputes/campaigns').catch(() => ({ data: [] })),
           api.post('/api/v1/privacy/scan').catch(() => ({ data: { privacy_score: 85 } })),
           api.get('/api/v1/privacy/leaks').catch(() => ({ data: [] })),
           api.get('/api/v1/privacy/brokers').catch(() => ({ data: [] })),
+          api.get('/api/v1/advisor/recommendations').catch(() => ({ data: { recommendations: [], credit_health_index: 85 } })),
         ]);
 
         setViolations(violRes.data || []);
@@ -186,6 +206,11 @@ export default function DashboardPage() {
         if (scanRes.data?.privacy_score) setPrivacyScore(scanRes.data.privacy_score);
         setLeaks(leaksRes.data || []);
         setBrokerRequests(brokersRes.data || []);
+
+        if (advisorRes.data?.recommendations) {
+          setRecommendations(advisorRes.data.recommendations);
+          setHealthIndex(advisorRes.data.credit_health_index || 85);
+        }
       } catch (err) {
         console.error('Auth check error:', err);
         localStorage.removeItem('token');
@@ -243,6 +268,38 @@ export default function DashboardPage() {
     }
   };
 
+  // Refresh AI Advisor recommendations
+  const handleRefreshAdvisor = async () => {
+    setLoadingAdvisor(true);
+    try {
+      const res = await api.get('/api/v1/advisor/recommendations');
+      if (res.data?.recommendations) {
+        setRecommendations(res.data.recommendations);
+        setHealthIndex(res.data.credit_health_index || 85);
+      }
+    } catch (err) {
+      console.error('Advisor refresh error:', err);
+    } finally {
+      setLoadingAdvisor(false);
+    }
+  };
+
+  // Execute recommendation handler (pre-fills form & scrolls)
+  const handleExecuteRecommendation = (rec: AdvisorRecommendation) => {
+    if (rec.action_type === 'FCRA_605B_BLOCK') {
+      privacySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
+    } else if (rec.action_type === 'CCPA_OPT_OUT') {
+      privacySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
+      handleTriggerOptOut();
+    } else if (rec.action_type === 'DEBT_VALIDATION') {
+      setLetterType('DEBT_VALIDATION');
+      disputeSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
+    } else {
+      setLetterType('SECTION_609');
+      disputeSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   // Upload & Audit Report Trigger
   const handleUploadAndAudit = async () => {
     if (!selectedFile) return;
@@ -268,6 +325,9 @@ export default function DashboardPage() {
 
       setViolations(auditRes.data || []);
       setUploadProgress('Audit complete!');
+
+      // Refresh Advisor
+      handleRefreshAdvisor();
     } catch (err: any) {
       console.error('Upload / Audit error:', err);
       alert(err.response?.data?.detail || 'Failed to analyze credit report.');
@@ -290,6 +350,7 @@ export default function DashboardPage() {
       ]);
       setLeaks(leaksRes.data || []);
       setBrokerRequests(brokersRes.data || []);
+      handleRefreshAdvisor();
     } catch (err) {
       console.error('Privacy scan error:', err);
     } finally {
@@ -304,6 +365,7 @@ export default function DashboardPage() {
       const optRes = await api.post('/api/v1/privacy/opt-out', {});
       setBrokerRequests(optRes.data || []);
       setPrivacyScore((prev) => Math.min(100, prev + 10));
+      handleRefreshAdvisor();
     } catch (err) {
       console.error('Opt-out trigger error:', err);
     } finally {
@@ -426,7 +488,7 @@ export default function DashboardPage() {
       <div className="min-h-screen bg-[#050811] flex items-center justify-center text-slate-300">
         <div className="flex items-center gap-3">
           <RefreshCw className="w-6 h-6 animate-spin text-cyan-400" />
-          <span className="text-sm font-semibold">Loading FCRA & Privacy Defense Engine...</span>
+          <span className="text-sm font-semibold">Loading FCRA & AI Strategy Advisor...</span>
         </div>
       </div>
     );
@@ -446,15 +508,15 @@ export default function DashboardPage() {
                 <Scale className="w-5 h-5 text-white" />
               </div>
               <span className="font-extrabold text-lg tracking-tight text-white hidden sm:inline">
-                US Credit & <span className="gradient-text">Privacy Agent</span>
+                US Credit & <span className="gradient-text">AI Legal Advisor</span>
               </span>
             </Link>
           </div>
 
           <div className="flex items-center gap-4">
             <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-cyan-950/60 border border-cyan-500/30 text-cyan-300 text-xs font-mono">
-              <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
-              FCRA § 605B & CCPA Leak Agent Active
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+              AI Advisor Engine Active
             </div>
 
             <div className="text-right text-xs">
@@ -477,6 +539,105 @@ export default function DashboardPage() {
 
       {/* Main Content Area */}
       <main className="max-w-7xl mx-auto px-6 pt-8 space-y-8 flex-1 w-full">
+        
+        {/* SECTION 0: AI Credit & Privacy Advisor Strategy Engine */}
+        <section className="glass-panel p-6 sm:p-8 rounded-2xl border border-cyan-500/30 space-y-6 bg-gradient-to-br from-slate-900/90 via-slate-950/95 to-slate-900/90 shadow-2xl relative overflow-hidden">
+          <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none">
+            <Compass className="w-72 h-72 text-cyan-400" />
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4 relative z-10">
+            <div>
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-semibold uppercase tracking-wider mb-2">
+                <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+                Statutory AI Strategy Advisor
+              </div>
+              <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+                Personalized Legal & Privacy Action Plan
+              </h2>
+              <p className="text-xs text-slate-400 mt-1 max-w-2xl">
+                Continuous cross-analysis of your FCRA audit violations, dark web credential leaks, and data broker profile to generate a prioritized statutory strategy.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-4">
+              <div className="px-4 py-2 rounded-xl bg-slate-950 border border-slate-800 text-right font-mono">
+                <div className="text-[10px] text-slate-400 uppercase tracking-widest">Health Index</div>
+                <div className="text-xl font-black text-emerald-400">{healthIndex}/100</div>
+              </div>
+
+              <button
+                onClick={handleRefreshAdvisor}
+                disabled={loadingAdvisor}
+                className="p-2.5 rounded-xl border border-slate-700 bg-slate-900 text-slate-300 hover:text-white transition-colors disabled:opacity-40"
+                title="Refresh AI Recommendations"
+              >
+                <RefreshCw className={`w-4 h-4 text-cyan-400 ${loadingAdvisor ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          {/* Recommendations Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative z-10">
+            {recommendations.length === 0 ? (
+              <div className="md:col-span-2 text-center py-8 text-slate-400 text-xs italic">
+                Analyzing credit and privacy profile...
+              </div>
+            ) : (
+              recommendations.map((rec) => (
+                <div
+                  key={rec.id}
+                  className={`p-5 rounded-xl border flex flex-col justify-between space-y-4 transition-all duration-300 ${
+                    rec.priority === 'IMMEDIATE_ACTION'
+                      ? 'bg-red-950/20 border-red-500/40 hover:border-red-500/70 shadow-lg shadow-red-950/20'
+                      : rec.priority === 'HIGH_PRIORITY'
+                      ? 'bg-amber-950/20 border-amber-500/40 hover:border-amber-500/70 shadow-lg shadow-amber-950/20'
+                      : 'bg-cyan-950/20 border-cyan-500/30 hover:border-cyan-500/60'
+                  }`}
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={`px-2.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wider ${
+                          rec.priority === 'IMMEDIATE_ACTION'
+                            ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                            : rec.priority === 'HIGH_PRIORITY'
+                            ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                            : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                        }`}
+                      >
+                        {rec.priority.replace('_', ' ')}
+                      </span>
+
+                      <span className="font-mono text-[10px] text-amber-300 font-bold px-2 py-0.5 rounded bg-slate-900 border border-slate-800">
+                        {rec.statute_citation}
+                      </span>
+                    </div>
+
+                    <h3 className="text-sm font-bold text-white leading-snug">{rec.title}</h3>
+                    <p className="text-xs text-slate-300 leading-relaxed">{rec.description}</p>
+                  </div>
+
+                  <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-3 text-xs">
+                    <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-mono font-semibold">
+                      <Zap className="w-3.5 h-3.5 fill-current" />
+                      <span>{rec.expected_impact}</span>
+                    </div>
+
+                    <button
+                      onClick={() => handleExecuteRecommendation(rec)}
+                      className="px-3.5 py-1.5 rounded-lg text-xs font-bold text-white bg-gradient-to-r from-cyan-500 to-indigo-600 hover:opacity-95 shadow-md transition-all flex items-center gap-1 whitespace-nowrap"
+                    >
+                      <span>Execute</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
         {/* FCRA 30-Day Response Window Countdown Banner */}
         <div className="glass-panel p-6 rounded-2xl border border-cyan-500/30 relative overflow-hidden bg-gradient-to-r from-slate-900/90 via-slate-900/80 to-slate-950/90 shadow-xl shadow-cyan-950/20">
           <div className="absolute top-0 right-0 p-8 opacity-10 pointer-events-none">
@@ -574,7 +735,7 @@ export default function DashboardPage() {
         </div>
 
         {/* SECTION: Privacy & Data Leak Defense Agent */}
-        <section className="glass-panel p-6 sm:p-8 rounded-2xl border border-indigo-500/30 space-y-6 bg-gradient-to-b from-indigo-950/30 to-slate-950/60 shadow-xl">
+        <section ref={privacySectionRef} className="glass-panel p-6 sm:p-8 rounded-2xl border border-indigo-500/30 space-y-6 bg-gradient-to-b from-indigo-950/30 to-slate-950/60 shadow-xl">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
             <div>
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-xs font-semibold uppercase tracking-wider mb-2">
@@ -1029,7 +1190,7 @@ export default function DashboardPage() {
         </section>
 
         {/* SECTION 3: Legal Dispute Generator & Live Markdown Preview */}
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <section ref={disputeSectionRef} className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Left Column: Letter Configuration Form */}
           <div className="glass-panel p-6 sm:p-8 rounded-2xl border border-slate-800 space-y-6">
             <div>
