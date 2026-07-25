@@ -22,12 +22,11 @@ class ScoreOptimizerService:
 
         for r in reports:
             all_tradelines.extend(r.tradelines)
-            if r.score_experian and r.score_experian > 300:
-                parsed_scores.append(r.score_experian)
-            if r.score_equifax and r.score_equifax > 300:
-                parsed_scores.append(r.score_equifax)
-            if r.score_transunion and r.score_transunion > 300:
-                parsed_scores.append(r.score_transunion)
+            if r.raw_json_data and isinstance(r.raw_json_data, dict):
+                for k in ["score_experian", "score_equifax", "score_transunion", "credit_score"]:
+                    val = r.raw_json_data.get(k)
+                    if val and isinstance(val, (int, float)) and val > 300:
+                        parsed_scores.append(int(val))
 
         has_uploaded_report = len(reports) > 0 and len(all_tradelines) > 0
 
@@ -43,16 +42,13 @@ class ScoreOptimizerService:
                     revolving_count += 1
 
         if has_uploaded_report:
-            # Aggregate balance across bureaus (deduplicate by unique tradeline if multiple bureaus)
-            # Estimate limit based on parsed balance or average credit card limit
+            # Aggregate balance across bureaus
             if total_balance > 0:
-                # If parsed balance exists, set limit to realistic ratio or sum
                 total_limit = round(max(total_balance * 1.6, 5000.0), 2)
             else:
                 total_balance = 1250.0
                 total_limit = 8000.0
 
-            # Determine base score from parsed scores or realistic parsed baseline
             if parsed_scores:
                 base_score = int(sum(parsed_scores) / len(parsed_scores))
             else:
