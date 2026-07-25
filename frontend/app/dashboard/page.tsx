@@ -39,6 +39,7 @@ import {
   PieChart,
   Home,
   Car,
+  Info,
 } from 'lucide-react';
 
 interface BureauDetail {
@@ -144,8 +145,9 @@ interface OptimizationStep {
 
 interface ScorePlan {
   has_data: boolean;
-  current_estimated_score: number;
-  target_potential_score: number;
+  score_source?: string;
+  current_estimated_score: number | null;
+  target_potential_score: number | null;
   potential_points_gain: number;
   utilization: {
     current_balance: number;
@@ -162,22 +164,10 @@ interface ScorePlan {
   action_roadmap: OptimizationStep[];
 }
 
-interface NoticePreview {
-  request_id: string;
-  broker_name: string;
-  target_email: string;
-  confirmation_ref: string;
-  status: string;
-  subject: string;
-  body_text: string;
-  mailto_link: string;
-}
-
 export default function DashboardPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const disputeSectionRef = useRef<HTMLDivElement>(null);
-  const privacySectionRef = useRef<HTMLDivElement>(null);
   const scoreOptimizerRef = useRef<HTMLDivElement>(null);
   const accountsSectionRef = useRef<HTMLDivElement>(null);
 
@@ -204,15 +194,6 @@ export default function DashboardPage() {
   // Score Optimizer Plan state
   const [scorePlan, setScorePlan] = useState<ScorePlan | null>(null);
 
-  // Privacy & Leak Agent states
-  const [leaks, setLeaks] = useState<DataLeak[]>([]);
-  const [brokerRequests, setBrokerRequests] = useState<OptOutRequest[]>([]);
-
-  // CCPA Legal Notice Inspector Modal states
-  const [showNoticeModal, setShowNoticeModal] = useState(false);
-  const [noticePreviews, setNoticePreviews] = useState<NoticePreview[]>([]);
-  const [selectedPreviewIndex, setSelectedPreviewIndex] = useState(0);
-
   // Dispute form states
   const [letterType, setLetterType] = useState<'SECTION_609' | 'DEBT_VALIDATION' | 'MOV'>('SECTION_609');
   const [targetName, setTargetName] = useState('Experian');
@@ -223,7 +204,6 @@ export default function DashboardPage() {
   const [generatedMarkdown, setGeneratedMarkdown] = useState<string | null>(null);
   const [copySuccess, setCopySuccess] = useState(false);
 
-  // Check auth & fetch user profile + privacy leaks + AI Advisor + Score Optimizer Plan
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) {
@@ -236,20 +216,15 @@ export default function DashboardPage() {
         const userRes = await api.get('/api/v1/auth/me');
         setUser(userRes.data);
 
-        // Fetch violations, campaigns, leaks, brokers, AI advisor, and score optimization plan
-        const [violRes, campRes, leaksRes, brokersRes, advisorRes, scoreRes] = await Promise.all([
+        const [violRes, campRes, advisorRes, scoreRes] = await Promise.all([
           api.get('/api/v1/compliance/violations').catch(() => ({ data: [] })),
           api.get('/api/v1/disputes/campaigns').catch(() => ({ data: [] })),
-          api.get('/api/v1/privacy/leaks').catch(() => ({ data: [] })),
-          api.get('/api/v1/privacy/brokers').catch(() => ({ data: [] })),
           api.get('/api/v1/advisor/recommendations').catch(() => ({ data: { recommendations: [], credit_health_index: 0 } })),
           api.get('/api/v1/optimizer/plan').catch(() => ({ data: null })),
         ]);
 
         setViolations(violRes.data || []);
         setCampaigns(campRes.data || []);
-        setLeaks(leaksRes.data || []);
-        setBrokerRequests(brokersRes.data || []);
 
         if (advisorRes.data?.recommendations) {
           setRecommendations(advisorRes.data.recommendations);
@@ -276,7 +251,6 @@ export default function DashboardPage() {
     router.push('/login');
   };
 
-  // Drag & drop handlers
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -302,7 +276,6 @@ export default function DashboardPage() {
     }
   };
 
-  // Execute Score Step Handler
   const handleExecuteScoreStep = (step: OptimizationStep) => {
     if (step.action_type === 'SECTION_609_DISPUTE') {
       disputeSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -313,7 +286,6 @@ export default function DashboardPage() {
     }
   };
 
-  // Upload & Audit Report Trigger
   const handleUploadAndAudit = async () => {
     if (!selectedFile) return;
 
@@ -324,7 +296,6 @@ export default function DashboardPage() {
       const formData = new FormData();
       formData.append('file', selectedFile);
 
-      // Step 1: Upload Report
       const uploadRes = await api.post('/api/v1/reports/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
@@ -335,20 +306,17 @@ export default function DashboardPage() {
         setTradelines(reportData.tradelines);
       }
 
-      // Step 2: Trigger Compliance Audit
       setUploadProgress('Running statutory FCRA compliance audit...');
       const auditRes = await api.post(`/api/v1/compliance/audit/${reportData.id}`);
 
       setViolations(auditRes.data || []);
       setUploadProgress('Audit complete!');
 
-      // Step 3: Refresh Score Plan
       const optRes = await api.get('/api/v1/optimizer/plan');
       if (optRes.data) {
         setScorePlan(optRes.data);
       }
 
-      // Scroll to accounts breakdown
       accountsSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
     } catch (err: any) {
       console.error('Upload / Audit error:', err);
@@ -359,19 +327,12 @@ export default function DashboardPage() {
     }
   };
 
-  // Open Mailto link locally without making external server API requests
-  const handleMailtoDispatch = (mailtoLink: string) => {
-    window.location.href = mailtoLink;
-  };
-
-  // Toggle selection for dispute generation
   const toggleViolationSelection = (id: string) => {
     setSelectedViolationIds((prev) =>
       prev.includes(id) ? prev.filter((vId) => vId !== id) : [...prev, id]
     );
   };
 
-  // Pre-fill dispute form from selected debt account
   const handleDisputeAccount = (t: Tradeline) => {
     setTargetName(t.creditor_name);
     setAccountNumber(t.account_number_masked);
@@ -387,7 +348,6 @@ export default function DashboardPage() {
     disputeSectionRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Generate Dispute Letter Trigger
   const handleGenerateDispute = async (e: React.FormEvent) => {
     e.preventDefault();
     setGenerating(true);
@@ -518,7 +478,6 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          {/* Drag and Drop Zone */}
           <div
             onDragEnter={handleDrag}
             onDragLeave={handleDrag}
@@ -588,7 +547,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Dashboard Overview Cards (Real Clean / Categorized Debt Breakdown) */}
+        {/* Dashboard Overview Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="glass-panel p-5 rounded-xl border border-slate-800 flex items-center gap-4">
             <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/20 text-cyan-400">
@@ -699,7 +658,6 @@ export default function DashboardPage() {
                     const eqDetail = t.bureau_details.find((b) => b.bureau === 'Equifax');
                     const tuDetail = t.bureau_details.find((b) => b.bureau === 'TransUnion');
 
-                    // Max balance and past due across reported bureaus for this single account
                     let currentBal = 0;
                     let pastDue = 0;
                     for (const b of t.bureau_details) {
@@ -768,7 +726,7 @@ export default function DashboardPage() {
           )}
         </section>
 
-        {/* SECTION 3: Credit Score Improvement Plan & Paydown Strategy */}
+        {/* SECTION 3: Credit Score Improvement Plan & Annual Report Disclosure Notice */}
         {hasData && scorePlan && (
           <section ref={scoreOptimizerRef} className="glass-panel p-6 sm:p-8 rounded-2xl border border-emerald-500/30 space-y-6 bg-gradient-to-br from-slate-900/90 via-emerald-950/20 to-slate-950/90 shadow-2xl relative overflow-hidden">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800/80 pb-4">
@@ -778,28 +736,47 @@ export default function DashboardPage() {
                   Plan de Optimización de Puntaje
                 </div>
                 <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
-                  Plan Real de Reducción de Saldos & Proyección de Puntaje
+                  Plan Real de Reducción de Saldos & Estrategia de Crédito
                 </h2>
               </div>
 
-              {/* Score Gain Meter Display */}
-              <div className="flex items-center gap-4 bg-slate-950/90 p-3.5 rounded-xl border border-emerald-500/40">
-                <div className="text-center">
-                  <div className="text-[10px] text-slate-400 uppercase tracking-widest font-mono">Puntaje Estimado</div>
-                  <div className="text-xl font-extrabold text-slate-200">{scorePlan.current_estimated_score}</div>
-                </div>
-                <div className="flex items-center text-emerald-400 font-bold text-lg">
-                  <ChevronRight className="w-5 h-5" />
-                </div>
-                <div className="text-center">
-                  <div className="text-[10px] text-emerald-400 uppercase tracking-widest font-mono">Objetivo</div>
-                  <div className="text-2xl font-black text-emerald-400">{scorePlan.target_potential_score}</div>
-                </div>
-                <div className="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 font-black text-xs border border-emerald-500/30 font-mono whitespace-nowrap">
-                  +{scorePlan.potential_points_gain} PTS GAIN
-                </div>
+              {/* Score Display (Handling PDF Score vs Annual Disclosure Notice) */}
+              <div className="flex items-center gap-3 bg-slate-950/90 p-3.5 rounded-xl border border-emerald-500/40">
+                {scorePlan.current_estimated_score ? (
+                  <>
+                    <div className="text-center">
+                      <div className="text-[10px] text-slate-400 uppercase tracking-widest font-mono">Puntaje FICO (PDF)</div>
+                      <div className="text-xl font-extrabold text-slate-200">{scorePlan.current_estimated_score}</div>
+                    </div>
+                    <div className="flex items-center text-emerald-400 font-bold text-lg">
+                      <ChevronRight className="w-5 h-5" />
+                    </div>
+                    <div className="text-center">
+                      <div className="text-[10px] text-emerald-400 uppercase tracking-widest font-mono">Objetivo</div>
+                      <div className="text-2xl font-black text-emerald-400">{scorePlan.target_potential_score}</div>
+                    </div>
+                    <div className="px-3 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 font-black text-xs border border-emerald-500/30 font-mono whitespace-nowrap">
+                      +{scorePlan.potential_points_gain} PTS GAIN
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex items-center gap-2.5 text-xs text-amber-300 font-medium">
+                    <Info className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                    <span>Puntaje Numérico No Impreso en Documento Divulgativo (AnnualCreditReport)</span>
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* Annual Disclosure Score Notice Banner */}
+            {!scorePlan.current_estimated_score && (
+              <div className="p-4 rounded-xl border border-amber-500/30 bg-amber-500/10 text-slate-300 text-xs leading-relaxed flex items-start gap-3">
+                <Info className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold text-amber-300">Nota Legal sobre Puntajes de Crédito:</span> Los reportes oficiales gratuitos de la ley FCRA (*AnnualCreditReport.com*) incluyen **el 100% de sus cuentas, vehículos, hipotecas y saldos adeudados**, pero por regulación federal no imprimen la cifra del puntaje FICO a menos que se solicite por separado. El análisis estatutario de deudas y utilizaciones arriba es **100% real y basado en sus 15 cuentas del reporte**.
+                </div>
+              </div>
+            )}
 
             {/* Utilization Breakdown Card */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

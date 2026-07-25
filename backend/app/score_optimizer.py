@@ -1,5 +1,5 @@
 import uuid
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -39,7 +39,6 @@ class ScoreOptimizerService:
 
         if has_uploaded_report:
             for t in all_tradelines:
-                # Find maximum balance and past due reported for this specific tradeline across bureaus
                 max_bal = 0.0
                 max_past_due = 0.0
                 for b in t.bureau_details:
@@ -50,7 +49,6 @@ class ScoreOptimizerService:
 
                 total_past_due += max_past_due
 
-                # Check account type (Revolving Credit Cards vs Mortgage / Auto / Installment)
                 acct_type_str = (t.account_type or "").lower()
                 is_revolving = any(k in acct_type_str for k in ["revolving", "credit card", "charge"]) or any(
                     k in t.creditor_name.lower() for k in ["card", "bank of america", "capital one", "bestbuy", "amazon", "sam s club", "bridgestone"]
@@ -61,7 +59,6 @@ class ScoreOptimizerService:
                 else:
                     installment_balance += max_bal
 
-            # Calculate revolving limits (or standard 1.5x fallback if limit missing)
             if revolving_balance > 0:
                 revolving_limit = round(max(revolving_balance * 1.5, 44000.0), 2)
             else:
@@ -69,14 +66,17 @@ class ScoreOptimizerService:
 
             if parsed_scores:
                 base_score = int(sum(parsed_scores) / len(parsed_scores))
+                score_source = "EXTRACTED_FROM_REPORT"
             else:
-                base_score = 680
+                base_score = None
+                score_source = "NOT_INCLUDED_IN_ANNUAL_REPORT"
         else:
             revolving_balance = 0.0
             installment_balance = 0.0
             total_past_due = 0.0
             revolving_limit = 0.0
-            base_score = 0
+            base_score = None
+            score_source = "UNAUDITED"
 
         total_real_debt = revolving_balance + installment_balance
         utilization_pct = round((revolving_balance / revolving_limit) * 100, 1) if revolving_limit > 0 else 0.0
@@ -88,7 +88,7 @@ class ScoreOptimizerService:
         if has_uploaded_report and utilization_pct < 15.0:
             potential_gain = max(20, 60 - int(utilization_pct))
 
-        target_score = min(850, base_score + potential_gain) if has_uploaded_report else 0
+        target_score = (base_score + potential_gain) if (base_score is not None) else None
 
         # 4. Build Action Roadmap
         roadmap: List[Dict[str, Any]] = [
@@ -136,6 +136,7 @@ class ScoreOptimizerService:
 
         return {
             "has_data": has_uploaded_report,
+            "score_source": score_source,
             "current_estimated_score": base_score,
             "target_potential_score": target_score,
             "potential_points_gain": potential_gain,
