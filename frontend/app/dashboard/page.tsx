@@ -415,7 +415,7 @@ export default function DashboardPage() {
     } catch (err: any) {
       console.error('Dispute generation error:', err);
       alert(err.response?.data?.detail || 'Failed to generate dispute letter.');
-    } flexally {
+    } finally {
       setGenerating(false);
     }
   };
